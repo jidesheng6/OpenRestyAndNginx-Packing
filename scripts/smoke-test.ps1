@@ -85,6 +85,7 @@ try {
         }
         if (-not $iconPath -or -not (Test-Path $iconPath)) {
             if ($link -notlike '*.url') {
+                # Windows Server may not expose IconLocation through WScript.Shell even though the .lnk stores it.
                 $raw = [Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($link)) +
                        [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($link))
                 if ($raw -match 'openresty[^"\x00]*\.ico') {
