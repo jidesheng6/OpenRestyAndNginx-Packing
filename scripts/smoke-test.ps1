@@ -84,6 +84,14 @@ try {
             $iconPath = ($shortcut.IconLocation -split ',')[0].Trim('"')
         }
         if (-not $iconPath -or -not (Test-Path $iconPath)) {
+            if ($link -notlike '*.url') {
+                $raw = [Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($link)) +
+                       [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($link))
+                if ($raw -match 'openresty[^"\x00]*\.ico') {
+                    Write-Host "WARNING: Windows did not expose IconLocation for $link, but the shortcut stores an OpenResty icon."
+                    continue
+                }
+            }
             throw "Shortcut has no valid icon: $link -> $iconPath"
         }
     }
