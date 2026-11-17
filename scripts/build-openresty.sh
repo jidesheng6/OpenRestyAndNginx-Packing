@@ -51,12 +51,13 @@ tar -xzf "$CACHE_DIR/$OPENSSL_VER.tar.gz" -C "$SRC_DIR/objs/lib"
 tar -xzf "$CACHE_DIR/$ZLIB_VER.tar.gz" -C "$SRC_DIR/objs/lib"
 tar -xzf "$CACHE_DIR/$PCRE_VER.tar.gz" -C "$SRC_DIR/objs/lib"
 
-for p in "$SRC_DIR"/patches/openssl-*-sess_set_get_cb_yield.patch; do
-  if [[ -f "$p" ]]; then
-    echo "applying $(basename "$p")"
-    (cd "$SRC_DIR/objs/lib/$OPENSSL_VER" && patch -p1 < "$p")
-  fi
-done
+OPENSSL_PATCH="$WORKSPACE/patches/openssl-3.5.5-sess_set_get_cb_yield.patch"
+if [[ -f "$OPENSSL_PATCH" ]]; then
+  echo "applying $(basename "$OPENSSL_PATCH") to $OPENSSL_VER"
+  (cd "$SRC_DIR/objs/lib/$OPENSSL_VER" && patch -p1 < "$OPENSSL_PATCH")
+else
+  echo "warning: vendored OpenSSL patch not found: $OPENSSL_PATCH" >&2
+fi
 
 cd "$SRC_DIR"
 ./configure \
