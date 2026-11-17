@@ -117,10 +117,50 @@ begin
     Result := FileExists(AddBackslash(InstallDir) + 'nginx.exe');
 end;
 
+function DetectPortFromConf(const InstallDir: String; var Port: Integer): Boolean;
+var
+  ConfPath: String;
+  Lines: TArrayOfString;
+  I: Integer;
+  J: Integer;
+  S: String;
+  Digits: String;
+begin
+  Result := False;
+  ConfPath := AddBackslash(InstallDir) + 'conf\nginx.conf';
+  if not FileExists(ConfPath) then
+    Exit;
+  if not LoadStringsFromFile(ConfPath, Lines) then
+    Exit;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    S := Trim(Lines[I]);
+    if (Length(S) >= 6) and (CompareText(Copy(S, 1, 6), 'listen') = 0) then
+    begin
+      J := 7;
+      while (J <= Length(S)) and ((S[J] = ' ') or (S[J] = #9)) do
+        J := J + 1;
+      Digits := '';
+      while (J <= Length(S)) and (S[J] >= '0') and (S[J] <= '9') do
+      begin
+        Digits := Digits + S[J];
+        J := J + 1;
+      end;
+      if Digits <> '' then
+      begin
+        Port := StrToIntDef(Digits, Port);
+        Result := True;
+        Exit;
+      end;
+    end;
+  end;
+end;
+
 function InitializeSetup: Boolean;
 var
   PortText: String;
   PortValue: Integer;
+  InstallDir: String;
 begin
   Result := True;
   DefaultPort := 80;
@@ -130,6 +170,12 @@ begin
   begin
     PortValue := StrToIntDef(PortText, 80);
     if (PortValue > 0) and (PortValue < 65536) then
+      DefaultPort := PortValue;
+  end;
+
+  if HasExistingInstall and RegQueryStringValue(HKLM, 'Software\OpenResty', 'InstallDir', InstallDir) then
+  begin
+    if DetectPortFromConf(InstallDir, PortValue) then
       DefaultPort := PortValue;
   end;
 
@@ -235,7 +281,11 @@ var
 begin
   ExePath := ExpandConstant('{app}\{#ServiceExeName}');
   if FileExists(ExePath) then
+  begin
     Exec(ExePath, 'stop', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(500);
+    Exec(ExePath, 'uninstall', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
