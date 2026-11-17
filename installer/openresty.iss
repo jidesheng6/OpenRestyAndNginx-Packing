@@ -98,6 +98,14 @@ var
   PerlFound: Boolean;
   KeepConfig: Boolean;
 
+function BoolText(const B: Boolean): String;
+begin
+  if B then
+    Result := 'True'
+  else
+    Result := 'False';
+end;
+
 function GetHttpPort(Param: String): String;
 begin
   Result := IntToStr(HttpPort);
@@ -473,6 +481,9 @@ var
 begin
   Result := True;
   KeepParam := ExpandConstant('{param:KEEPCONF|}');
+  if KeepParam = '' then
+    KeepParam := GetEnv('OPENRESTY_KEEPCONF');
+  Log('KEEPCONF value: "' + KeepParam + '"');
   if KeepParam = '0' then
     KeepConfig := False
   else if KeepParam = '1' then
@@ -486,6 +497,14 @@ begin
                      mbConfirmation, MB_YESNO);
     KeepConfig := (Answer = IDYES);
   end;
+  Log('KeepConfig: ' + BoolText(KeepConfig));
+end;
+
+procedure DeleteUserData;
+begin
+  Log('Deleting conf: ' + BoolText(DelTree(ExpandConstant('{app}\conf'), True, True, True)));
+  Log('Deleting html: ' + BoolText(DelTree(ExpandConstant('{app}\html'), True, True, True)));
+  Log('Deleting logs: ' + BoolText(DelTree(ExpandConstant('{app}\logs'), True, True, True)));
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -503,11 +522,12 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     RemoveFromPath;
+    Sleep(1000);
     if not KeepConfig then
-    begin
-      DelTree(ExpandConstant('{app}\conf'), True, True, True);
-      DelTree(ExpandConstant('{app}\html'), True, True, True);
-      DelTree(ExpandConstant('{app}\logs'), True, True, True);
-    end;
+      DeleteUserData;
+  end;
+  if (CurUninstallStep = usDone) and (not KeepConfig) then
+  begin
+    DeleteUserData;
   end;
 end;

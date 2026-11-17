@@ -70,10 +70,25 @@ try {
     Write-Host "Upgrade preserved user configuration"
 
     if (-not (Test-Path $Uninstaller)) { throw "Uninstaller not found: $Uninstaller" }
-    Invoke-Installer $Uninstaller "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /KEEPCONF=0"
+    $uninstallLog = Join-Path $env:RUNNER_TEMP "openresty-uninstall.log"
+    $env:OPENRESTY_KEEPCONF = "0"
+    Invoke-Installer $Uninstaller "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /KEEPCONF=0 /LOG=`"$uninstallLog`""
+    Remove-Item Env:\OPENRESTY_KEEPCONF -ErrorAction SilentlyContinue
 
     Wait-For { -not (Get-Service -Name OpenResty -ErrorAction SilentlyContinue) } 60 "OpenResty service removal" | Out-Null
-    Wait-For { -not (Test-Path $InstallDir) } 60 "installation directory removal" | Out-Null
+
+    $deadline = (Get-Date).AddSeconds(90)
+    while ((Get-Date) -lt $deadline -and (Test-Path $InstallDir)) { Start-Sleep -Seconds 1 }
+    if (Test-Path $InstallDir) {
+        $leftovers = Get-ChildItem $InstallDir -Recurse -File -ErrorAction SilentlyContinue |
+            Select-Object -First 40 -ExpandProperty FullName
+        if (Test-Path $uninstallLog) {
+            Write-Host "----- uninstall log (tail) -----"
+            Get-Content $uninstallLog -Tail 60 | Write-Host
+            Write-Host "----- end uninstall log -----"
+        }
+        throw "Installation directory still exists after uninstall. Leftover files: $($leftovers -join '; ')"
+    }
 
     $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
     if ($machinePath -like "*$InstallDir*") {
