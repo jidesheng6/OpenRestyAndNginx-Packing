@@ -10,6 +10,9 @@ $InstallerPath = (Resolve-Path $InstallerPath).Path
 $InstallDir = Join-Path $env:ProgramFiles "OpenResty"
 $Uninstaller = Join-Path $InstallDir "unins000.exe"
 $ConfPath = Join-Path $InstallDir "conf\nginx.conf"
+$StartMenuDir = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\OpenResty"
+$DesktopDir = Join-Path $env:PUBLIC "Desktop"
+$DesktopBefore = @(Get-ChildItem $DesktopDir -Filter *.lnk -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
 $Marker = "# smoke-test upgrade marker 0123456789"
 
 function Wait-For([scriptblock]$Condition, [int]$TimeoutSeconds, [string]$Description) {
@@ -40,7 +43,8 @@ function Invoke-Installer([string]$Path, [string]$Arguments) {
 
 try {
     Write-Host "Installing $InstallerPath on port $Port"
-    Invoke-Installer $InstallerPath "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /PORT=$Port"
+    $installArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /PORT=$Port /TASKS=`"startservice,addtopath,desktopicon`""
+    Invoke-Installer $InstallerPath $installArgs
 
     Wait-For { (Get-Service -Name OpenResty -ErrorAction SilentlyContinue).Status -eq "Running" } 90 "OpenResty service running" | Out-Null
     Wait-For { (Get-HealthStatus $Port) -eq 200 } 60 "health endpoint on port $Port" | Out-Null
@@ -56,11 +60,34 @@ try {
         throw "Install directory was not added to the machine PATH."
     }
 
+    foreach ($iconName in @("openresty.ico", "openresty-start.ico", "openresty-stop.ico", "openresty-restart.ico", "openresty-web.ico")) {
+        $iconPath = Join-Path $InstallDir "icons\$iconName"
+        if (-not (Test-Path $iconPath)) { throw "Missing shortcut icon: $iconPath" }
+    }
+
+    $startLinks = @(Get-ChildItem $StartMenuDir -Filter *.lnk -ErrorAction SilentlyContinue)
+    if ($startLinks.Count -lt 6) {
+        throw "Expected 6 Start Menu shortcuts, found $($startLinks.Count) in $StartMenuDir"
+    }
+    $desktopAfter = @(Get-ChildItem $DesktopDir -Filter *.lnk -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+    $desktopNew = @($desktopAfter | Where-Object { $_ -notin $DesktopBefore })
+    if ($desktopNew.Count -lt 4) {
+        throw "Expected 4 new desktop shortcuts, found $($desktopNew.Count)"
+    }
+    $wsh = New-Object -ComObject WScript.Shell
+    foreach ($link in (@($startLinks | ForEach-Object { $_.FullName }) + $desktopNew)) {
+        $shortcut = $wsh.CreateShortcut($link)
+        $iconPath = ($shortcut.IconLocation -split ',')[0].Trim('"')
+        if (-not $iconPath -or -not (Test-Path $iconPath)) {
+            throw "Shortcut has no valid icon: $link -> $iconPath"
+        }
+    }
+
     if (-not (Test-Path $ConfPath)) { throw "Missing configuration file: $ConfPath" }
     Add-Content -Path $ConfPath -Value $Marker -Encoding UTF8
 
     Write-Host "Re-running installer to verify upgrade keeps configuration"
-    Invoke-Installer $InstallerPath "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /PORT=$Port"
+    Invoke-Installer $InstallerPath $installArgs
     Wait-For { (Get-Service -Name OpenResty -ErrorAction SilentlyContinue).Status -eq "Running" } 90 "OpenResty service running after upgrade" | Out-Null
     Wait-For { (Get-HealthStatus $Port) -eq 200 } 60 "health endpoint after upgrade" | Out-Null
     if (-not (Select-String -Path $ConfPath -Pattern ([regex]::Escape($Marker)) -Quiet)) {
@@ -97,6 +124,17 @@ try {
 
     $leftover = Get-Process nginx -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$InstallDir\*" }
     if ($leftover) { throw "nginx.exe processes are still running after uninstall." }
+
+    $remainingLinks = @($desktopNew | Where-Object { Test-Path $_ })
+    if ($remainingLinks.Count -gt 0) {
+        throw "Desktop shortcuts were not removed: $($remainingLinks -join '; ')"
+    }
+    if (Test-Path $StartMenuDir) {
+        $remainingStartLinks = @(Get-ChildItem $StartMenuDir -Filter *.lnk -ErrorAction SilentlyContinue)
+        if ($remainingStartLinks.Count -gt 0) {
+            throw "Start Menu shortcuts were not removed: $($remainingStartLinks.FullName -join '; ')"
+        }
+    }
 
     Write-Host "Smoke test passed: install, upgrade with config preservation, and uninstall."
 }

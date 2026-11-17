@@ -7,12 +7,14 @@
 ## 功能
 
 - 每日检查 `https://openresty.org/en/download.html` 的最新版本，发布新 Release
-- 支持手动指定版本重建：Actions -> Build Windows Installer -> Run workflow -> 填入 `1.31.8.1`
+- 支持手动指定版本重建：Actions -> 构建 Windows 安装程序 -> Run workflow -> 填入 `1.31.8.1`
+- 安装器为简体中文界面，安装程序、开始菜单和桌面快捷方式均带有 OpenResty 图标
 - 安装器基于 Inno Setup，包含 MIT 许可协议页
 - 使用 WinSW 注册 Windows 服务 `OpenResty`（自包含 x64 版本，不依赖 .NET Framework）
 - 首次安装可配置 HTTP 端口（默认 80），并检测端口占用
 - 可选加入系统 PATH，卸载时自动移除（已打开的终端需重开才能读取新的 PATH）
-- 安装完成后自动启动服务并做健康检查，可在完成页打开测试页
+- 安装完成后自动启动服务并做健康检查，随后自动打开测试页（静默安装除外）
+- 可在“附加任务”中选择创建桌面快捷方式（启动、停止、重启、打开测试页）
 - 升级只替换程序文件，保留 `conf/`、`html/`、`logs/`
 - 卸载时停止并移除服务，询问是否保留配置与日志
 - 检测 Perl：`resty` 工具需要 Perl，服务本身不需要
@@ -24,7 +26,10 @@
 - `scripts/build-openresty.sh`：MSYS2 下的源码编译与运行库收集
 - `scripts/stage-payload.ps1`：整理安装树、下载 WinSW、生成服务配置
 - `scripts/smoke-test.ps1`：安装/升级/卸载自动化验证
+- `scripts/generate-icons.ps1`：生成安装程序与快捷方式使用的 `.ico` 资源
 - `installer/openresty.iss`：Inno Setup 脚本
+- `installer/languages/ChineseSimplified.isl`：简体中文安装界面
+- `installer/assets/*.ico`：安装程序、服务控制与测试页图标
 - `installer/conf/nginx.conf`：默认配置模板（含 `/healthz`）
 - `installer/html/index.html`：安装完成后的测试首页
 
@@ -45,6 +50,10 @@ bash scripts/build-openresty.sh
 
 # 回到 PowerShell
 ./scripts/stage-payload.ps1 -Version 1.31.8.1
+
+# 仅在需要重新生成图标时执行
+./scripts/generate-icons.ps1
+
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=1.31.8.1" "installer\openresty.iss"
 ```
 
@@ -58,6 +67,9 @@ bash scripts/build-openresty.sh
 # 安装到默认目录，监听 8080，并启动服务
 .\OpenResty-Setup-1.31.8.1-win64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /PORT=8080
 
+# 同时创建桌面快捷方式
+.\OpenResty-Setup-1.31.8.1-win64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /PORT=8080 /TASKS="desktopicon"
+
 # 只安装不启动服务
 .\OpenResty-Setup-1.31.8.1-win64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOSTART=1
 
@@ -68,6 +80,7 @@ bash scripts/build-openresty.sh
 参数说明：
 
 - `/PORT=<port>`：仅首次安装生效，写入 `conf/nginx.conf`；升级时忽略，避免覆盖已有配置
+- `/TASKS="desktopicon"`：创建桌面快捷方式；交互安装时可在“附加任务”中勾选
 - `/NOSTART=1`：安装后不启动服务
 - `/KEEPCONF=0`：卸载时删除 `conf/`、`html/`、`logs/`；默认保留
 
@@ -78,7 +91,8 @@ bash scripts/build-openresty.sh
 - 配置：`conf\nginx.conf`
 - 日志：`logs\error.log`、`logs\access.log`
 - 健康检查：`http://127.0.0.1:<port>/healthz`
-- 开始菜单提供启动、停止、重载、打开测试页、卸载
+- 开始菜单提供启动、停止、重启、打开安装目录、打开测试页、卸载
+- 安装完成后自动打开测试页；静默安装不会自动打开
 
 ```powershell
 Get-Service OpenResty
@@ -90,10 +104,10 @@ Restart-Service OpenResty
 ## 版本发布流程
 
 1. 每天 02:00 UTC 自动运行，或手动触发
-2. 解析下载页最新源码版本；若 `v<version>` Release 已存在则跳过
+2. 解析下载页最新源码版本；若 `v<version>` Release 已存在则跳过（勾选“强制重建”可覆盖已有 Release 附件）
 3. 在 `windows-latest` 上用 MSYS2 编译 OpenResty 及 OpenSSL / PCRE2 / zlib
 4. 打包并执行烟测（安装 -> 健康检查 -> 升级保留配置 -> 卸载）
-5. 创建 Release `v<version>`，上传安装包与 SHA256
+5. 创建或更新 Release `v<version>`，上传安装包与 SHA256
 
 ## 限制与说明
 

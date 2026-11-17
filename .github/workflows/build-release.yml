@@ -1,4 +1,4 @@
-name: Build Windows Installer
+name: 构建 Windows 安装程序
 
 on:
   schedule:
@@ -6,9 +6,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "OpenResty version, for example 1.31.8.1. Leave empty to auto-detect the latest release."
+        description: "OpenResty 版本，例如 1.31.8.1。留空则自动检测最新版本。"
         required: false
         default: ""
+      force:
+        description: "即使 Release 已存在，也重新构建并覆盖安装包"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -19,20 +24,22 @@ concurrency:
 
 jobs:
   resolve:
-    name: Resolve OpenResty version
+    name: 解析 OpenResty 版本
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       build: ${{ steps.resolve.outputs.build }}
     steps:
-      - name: Detect latest version and check existing release
+      - name: 检测最新版本并检查 Release 是否已存在
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_FORCE: ${{ github.event.inputs.force }}
         run: |
           set -euo pipefail
           version="$(printf '%s' "$INPUT_VERSION" | tr -d '[:space:]')"
+          force="$(printf '%s' "$INPUT_FORCE" | tr '[:upper:]' '[:lower:]')"
           if [ -z "$version" ]; then
             html="$(curl -fsSL --retry 5 --retry-delay 2 https://openresty.org/en/download.html)"
             version="$(printf '%s' "$html" \
@@ -41,26 +48,31 @@ jobs:
               | sed -E 's/^openresty-//; s/\.tar\.gz$//')"
           fi
           if [ -z "$version" ]; then
-            echo "error: unable to determine the latest OpenResty version" >&2
+            echo "错误：无法确定最新的 OpenResty 版本" >&2
             exit 1
           fi
           code="$(curl -s -o /dev/null -w '%{http_code}' -r 0-0 "https://openresty.org/download/openresty-$version.tar.gz")"
           if [ "$code" != "200" ] && [ "$code" != "206" ]; then
-            echo "error: openresty-$version.tar.gz is not downloadable (HTTP $code)" >&2
+            echo "错误：openresty-$version.tar.gz 无法下载（HTTP $code）" >&2
             exit 1
           fi
           if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release v$version already exists; nothing to build."
-            build=false
+            if [ "$force" = "true" ]; then
+              echo "Release v$version 已存在，已启用强制重建。"
+              build=true
+            else
+              echo "Release v$version 已存在，跳过构建。"
+              build=false
+            fi
           else
             build=true
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
-          echo "Resolved version: $version (build=$build)" >> "$GITHUB_STEP_SUMMARY"
+          echo "解析结果：版本 $version（build=$build）" >> "$GITHUB_STEP_SUMMARY"
 
   build:
-    name: Build and release installer
+    name: 构建并发布安装程序
     needs: resolve
     if: needs.resolve.outputs.build == 'true'
     runs-on: windows-latest
@@ -68,10 +80,10 @@ jobs:
       VERSION: ${{ needs.resolve.outputs.version }}
       OPENRESTY_VERSION: ${{ needs.resolve.outputs.version }}
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Set up MSYS2 (MINGW64)
+      - name: 配置 MSYS2（MINGW64）
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -87,7 +99,7 @@ jobs:
             zip
             unzip
 
-      - name: Cache build downloads
+      - name: 缓存构建下载
         uses: actions/cache@v4
         with:
           path: .cache
@@ -95,15 +107,15 @@ jobs:
           restore-keys: |
             openresty-deps-
 
-      - name: Build OpenResty from source
+      - name: 从源码构建 OpenResty
         shell: msys2 {0}
         run: bash scripts/build-openresty.sh
 
-      - name: Stage installer payload
+      - name: 整理安装载荷
         shell: pwsh
         run: ./scripts/stage-payload.ps1 -Version $env:VERSION
 
-      - name: Install Inno Setup
+      - name: 安装 Inno Setup
         shell: pwsh
         run: |
           $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
@@ -111,7 +123,7 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
           Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait
 
-      - name: Compile installer
+      - name: 编译安装程序
         shell: pwsh
         run: |
           $candidates = @(
@@ -120,18 +132,18 @@ jobs:
             "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $iscc) { throw "ISCC.exe not found" }
+          if (-not $iscc) { throw "未找到 ISCC.exe" }
           & $iscc "/DAppVersion=$env:VERSION" "installer\openresty.iss"
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed with exit code $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译失败，退出代码 $LASTEXITCODE" }
 
-      - name: Smoke test installer
+      - name: 烟测安装程序
         shell: pwsh
         run: |
           $setup = Get-ChildItem "installer\Output\OpenResty-Setup-*.exe" | Select-Object -First 1
-          if (-not $setup) { throw "Setup executable not found" }
+          if (-not $setup) { throw "未找到安装程序" }
           ./scripts/smoke-test.ps1 -InstallerPath $setup.FullName -Port 18080
 
-      - name: Generate checksums
+      - name: 生成校验和
         shell: pwsh
         run: |
           $setup = Get-ChildItem "installer\Output\OpenResty-Setup-*.exe" | Select-Object -First 1
@@ -139,7 +151,7 @@ jobs:
           "$hash  $($setup.Name)" | Set-Content -Path "$($setup.FullName).sha256" -Encoding ASCII
           Get-Content "$($setup.FullName).sha256"
 
-      - name: Upload installer artifact
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: OpenResty-Setup-${{ needs.resolve.outputs.version }}-win64
@@ -148,29 +160,43 @@ jobs:
             installer/Output/OpenResty-Setup-*.exe.sha256
           if-no-files-found: error
 
-      - name: Prepare release notes
+      - name: 生成发布说明
         shell: pwsh
         run: |
           @"
-          OpenResty $env:VERSION for Windows x64.
+          OpenResty $env:VERSION Windows x64 安装包。
 
-          - Built from the official OpenResty source tarball on windows-latest with MSYS2 / MinGW64.
-          - Inno Setup installer with optional service registration managed by WinSW (service name: OpenResty).
-          - Upgrade replaces binaries but keeps conf/, html/ and logs/ untouched.
-          - The default HTTP port is 80 and can be changed during a fresh install (/PORT=<port> for silent installs).
-          - Uninstall stops and removes the service, and removes the installation directory from PATH.
+          - 基于 OpenResty 官方源码包，在 windows-latest 上使用 MSYS2 / MinGW64 构建。
+          - 安装程序为简体中文界面，使用 Inno Setup 制作；服务由 WinSW 注册和管理，服务名为 OpenResty。
+          - 升级安装会替换程序文件，但保留 conf/、html/ 和 logs/ 目录。
+          - 全新安装默认使用 80 端口，可在安装向导中修改；静默安装可传 /PORT=<端口>。
+          - 安装完成后会自动打开测试页；可在“附加任务”中选择创建桌面快捷方式。
+          - 卸载时会停止并删除服务，并从系统 PATH 中移除安装目录。
 
-          Upstream changes: https://openresty.org/en/changes.html
-          License: MIT (installer), OpenResty is BSD licensed by OpenResty Inc.
+          上游更新日志：https://openresty.org/en/changes.html
+          许可证：安装程序为 MIT；OpenResty 由 OpenResty Inc. 以 BSD 许可证发布。
           "@ | Set-Content -Path release-notes.md -Encoding UTF8
 
-      - name: Create GitHub release
+      - name: 创建或更新 GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $tag = "v$env:VERSION"
           $assets = Get-ChildItem "installer\Output\OpenResty-Setup-*.exe*" | ForEach-Object { $_.FullName }
-          gh release create "v$env:VERSION" $assets `
-            --repo "$env:GITHUB_REPOSITORY" `
-            --title "OpenResty $env:VERSION Windows Setup" `
-            --notes-file release-notes.md
+          gh release view $tag --repo "$env:GITHUB_REPOSITORY" *> $null
+          $releaseExists = ($LASTEXITCODE -eq 0)
+          if ($releaseExists) {
+            gh release upload $tag $assets --repo "$env:GITHUB_REPOSITORY" --clobber
+            if ($LASTEXITCODE -ne 0) { throw "上传 Release 附件失败" }
+            gh release edit $tag --repo "$env:GITHUB_REPOSITORY" `
+              --title "OpenResty $env:VERSION Windows 安装包" `
+              --notes-file release-notes.md
+            if ($LASTEXITCODE -ne 0) { throw "更新 Release 说明失败" }
+          } else {
+            gh release create $tag $assets `
+              --repo "$env:GITHUB_REPOSITORY" `
+              --title "OpenResty $env:VERSION Windows 安装包" `
+              --notes-file release-notes.md
+            if ($LASTEXITCODE -ne 0) { throw "创建 Release 失败" }
+          }

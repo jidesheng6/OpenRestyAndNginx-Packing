@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenResty is running</title>
+<title>OpenResty 已启动</title>
 <style>
   :root {
     --bg: #0d1117;
@@ -71,22 +71,22 @@
 </head>
 <body>
 <main>
-  <span class="badge"><span class="dot"></span>Service healthy</span>
-  <h1>OpenResty is running</h1>
-  <p>安装已成功完成，OpenResty 服务正在监听本机 HTTP 端口。修改 <code>conf/nginx.conf</code> 后可通过开始菜单中的 “Restart OpenResty” 使配置生效。</p>
+  <span class="badge"><span class="dot"></span>服务运行正常</span>
+  <h1>OpenResty 正在运行</h1>
+  <p>安装已成功完成，OpenResty 服务正在监听本机 HTTP 端口。修改 <code>conf/nginx.conf</code> 后可通过开始菜单中的“重启 OpenResty”使配置生效。</p>
   <dl>
-    <dt>Version</dt><dd>{{VERSION}}</dd>
-    <dt>Platform</dt><dd>Windows x64 (MinGW64)</dd>
-    <dt>Health check</dt><dd><a href="/healthz">/healthz</a></dd>
-    <dt>Config</dt><dd>conf/nginx.conf</dd>
-    <dt>Logs</dt><dd>logs/error.log</dd>
+    <dt>版本</dt><dd>{{VERSION}}</dd>
+    <dt>平台</dt><dd>Windows x64（MinGW64）</dd>
+    <dt>健康检查</dt><dd><a href="/healthz">/healthz</a></dd>
+    <dt>配置</dt><dd>conf/nginx.conf</dd>
+    <dt>日志</dt><dd>logs/error.log</dd>
   </dl>
   <nav>
-    <a href="https://openresty.org/en/" target="_blank" rel="noopener">Documentation</a>
-    <a href="https://openresty.org/en/changes.html" target="_blank" rel="noopener">Changelog</a>
+    <a href="https://openresty.org/en/" target="_blank" rel="noopener">官方文档</a>
+    <a href="https://openresty.org/en/changes.html" target="_blank" rel="noopener">更新日志</a>
     <a href="https://github.com/openresty/openresty" target="_blank" rel="noopener">GitHub</a>
   </nav>
-  <footer>Managed by WinSW as Windows service “OpenResty”.</footer>
+  <footer>由 WinSW 作为 Windows 服务“OpenResty”管理。</footer>
 </main>
 </body>
 </html>

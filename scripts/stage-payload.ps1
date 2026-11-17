@@ -60,7 +60,7 @@ $ServiceXml = @"
 <service>
   <id>OpenResty</id>
   <name>OpenResty</name>
-  <description>OpenResty (Nginx + LuaJIT) web platform managed by WinSW.</description>
+  <description>OpenResty（Nginx + LuaJIT）Web 平台服务，由 WinSW 管理。</description>
   <executable>%BASE%\nginx.exe</executable>
   <arguments>-p "%BASE%" -c conf/nginx.conf</arguments>
   <workingdirectory>%BASE%</workingdirectory>
@@ -79,8 +79,8 @@ Copy-Item -Path (Join-Path $RepoRoot "installer/assets/license-MIT.txt") -Destin
 
 $VersionInfo = @"
 OpenResty $Version
-Built from the official source tarball with MSYS2 / MinGW64.
-Build date: $((Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")) UTC
+使用 MSYS2 / MinGW64 从官方源码包构建。
+构建时间：$((Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")) UTC
 "@
 [System.IO.File]::WriteAllText((Join-Path $PayloadDir "version.txt"), $VersionInfo, (New-Object System.Text.UTF8Encoding($false)))
 

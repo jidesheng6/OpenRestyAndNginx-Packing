@@ -21,11 +21,14 @@ AppSupportURL={#AppURL}
 AppUpdatesURL={#AppURL}
 VersionInfoVersion={#AppVersion}
 VersionInfoProductName={#AppName}
+VersionInfoProductVersion={#AppVersion}
+VersionInfoDescription={#AppName} {#AppVersion} Windows 安装程序
 VersionInfoCompany={#AppPublisher}
 DefaultDirName={autopf}\OpenResty
 DefaultGroupName=OpenResty
 DisableProgramGroupPage=yes
 LicenseFile=assets\license-MIT.txt
+SetupIconFile=assets\openresty.ico
 OutputDir=Output
 OutputBaseFilename=OpenResty-Setup-{#AppVersion}-win64
 Compression=lzma2/max
@@ -37,17 +40,18 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 UsePreviousAppDir=yes
 ChangesEnvironment=yes
-UninstallDisplayIcon={app}\nginx.exe
+UninstallDisplayIcon={app}\icons\openresty.ico
 UninstallDisplayName={#AppName} {#AppVersion}
 CloseApplications=no
 RestartApplications=no
 
 [Languages]
-Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimp"; MessagesFile: "languages\ChineseSimplified.isl"
 
 [Tasks]
-Name: "startservice"; Description: "Start the OpenResty service after installation"; GroupDescription: "Additional tasks:"
-Name: "addtopath"; Description: "Add OpenResty to the system PATH"; GroupDescription: "Additional tasks:"
+Name: "startservice"; Description: "安装完成后自动启动 OpenResty 服务"; GroupDescription: "附加任务："
+Name: "addtopath"; Description: "将 OpenResty 添加到系统 PATH 环境变量"; GroupDescription: "附加任务："
+Name: "desktopicon"; Description: "创建桌面快捷方式（启动、停止、重启、打开测试页）"; GroupDescription: "附加任务："; Flags: unchecked
 
 [Files]
 Source: "..\payload\app\*"; DestDir: "{app}"; Excludes: "conf\*,html\*,logs\*"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -59,6 +63,11 @@ Source: "..\payload\{#ServiceExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\payload\openresty-service.xml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\payload\license-MIT.txt"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "..\payload\version.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "assets\openresty.ico"; DestDir: "{app}\icons"; Flags: ignoreversion
+Source: "assets\openresty-start.ico"; DestDir: "{app}\icons"; Flags: ignoreversion
+Source: "assets\openresty-stop.ico"; DestDir: "{app}\icons"; Flags: ignoreversion
+Source: "assets\openresty-restart.ico"; DestDir: "{app}\icons"; Flags: ignoreversion
+Source: "assets\openresty-web.ico"; DestDir: "{app}\icons"; Flags: ignoreversion
 
 [Dirs]
 Name: "{app}\conf"
@@ -66,20 +75,23 @@ Name: "{app}\html"
 Name: "{app}\logs"
 
 [Icons]
-Name: "{group}\Start OpenResty"; Filename: "{app}\{#ServiceExeName}"; Parameters: "start"; WorkingDir: "{app}"
-Name: "{group}\Stop OpenResty"; Filename: "{app}\{#ServiceExeName}"; Parameters: "stop"; WorkingDir: "{app}"
-Name: "{group}\Restart OpenResty"; Filename: "{app}\{#ServiceExeName}"; Parameters: "restart"; WorkingDir: "{app}"
-Name: "{group}\Open Install Folder"; Filename: "{app}"
-Name: "{group}\Open Test Page"; Filename: "http://127.0.0.1:{code:GetHttpPort}/"
-Name: "{group}\Uninstall OpenResty"; Filename: "{uninstallexe}"
+Name: "{group}\启动 OpenResty"; Filename: "{app}\{#ServiceExeName}"; Parameters: "start"; WorkingDir: "{app}"; IconFilename: "{app}\icons\openresty-start.ico"
+Name: "{group}\停止 OpenResty"; Filename: "{app}\{#ServiceExeName}"; Parameters: "stop"; WorkingDir: "{app}"; IconFilename: "{app}\icons\openresty-stop.ico"
+Name: "{group}\重启 OpenResty"; Filename: "{app}\{#ServiceExeName}"; Parameters: "restart"; WorkingDir: "{app}"; IconFilename: "{app}\icons\openresty-restart.ico"
+Name: "{group}\打开安装目录"; Filename: "{app}"; IconFilename: "{app}\icons\openresty.ico"
+Name: "{group}\打开测试页"; Filename: "http://127.0.0.1:{code:GetHttpPort}/"; IconFilename: "{app}\icons\openresty-web.ico"
+Name: "{group}\卸载 OpenResty"; Filename: "{uninstallexe}"; IconFilename: "{app}\icons\openresty.ico"
+Name: "{commondesktop}\启动 OpenResty"; Filename: "{app}\{#ServiceExeName}"; Parameters: "start"; WorkingDir: "{app}"; IconFilename: "{app}\icons\openresty-start.ico"; Tasks: desktopicon
+Name: "{commondesktop}\停止 OpenResty"; Filename: "{app}\{#ServiceExeName}"; Parameters: "stop"; WorkingDir: "{app}"; IconFilename: "{app}\icons\openresty-stop.ico"; Tasks: desktopicon
+Name: "{commondesktop}\重启 OpenResty"; Filename: "{app}\{#ServiceExeName}"; Parameters: "restart"; WorkingDir: "{app}"; IconFilename: "{app}\icons\openresty-restart.ico"; Tasks: desktopicon
+Name: "{commondesktop}\OpenResty 测试页"; Filename: "http://127.0.0.1:{code:GetHttpPort}/"; IconFilename: "{app}\icons\openresty-web.ico"; Tasks: desktopicon
 
 [Registry]
 Root: HKLM; Subkey: "Software\OpenResty"; Flags: uninsdeletekey
 
 [Run]
-Filename: "{app}\{#ServiceExeName}"; Parameters: "uninstall"; WorkingDir: "{tmp}"; Flags: runhidden waituntilterminated; StatusMsg: "Removing previous OpenResty service registration..."
-Filename: "{app}\{#ServiceExeName}"; Parameters: "install"; WorkingDir: "{tmp}"; Flags: runhidden waituntilterminated; StatusMsg: "Registering the OpenResty service..."
-Filename: "http://127.0.0.1:{code:GetHttpPort}/"; Description: "Open the OpenResty test page"; Flags: shellexec nowait postinstall skipifsilent; Check: ShouldOfferTestPage
+Filename: "{app}\{#ServiceExeName}"; Parameters: "uninstall"; WorkingDir: "{tmp}"; Flags: runhidden waituntilterminated; StatusMsg: "正在移除旧的 OpenResty 服务注册..."
+Filename: "{app}\{#ServiceExeName}"; Parameters: "install"; WorkingDir: "{tmp}"; Flags: runhidden waituntilterminated; StatusMsg: "正在注册 OpenResty 服务..."
 
 [UninstallRun]
 Filename: "{app}\{#ServiceExeName}"; Parameters: "stop"; WorkingDir: "{tmp}"; RunOnceId: "StopOpenRestyService"; Flags: runhidden waituntilterminated
@@ -97,6 +109,7 @@ var
   ServiceHealthy: Boolean;
   PerlFound: Boolean;
   KeepConfig: Boolean;
+  TestPageOpened: Boolean;
 
 function BoolText(const B: Boolean): String;
 begin
@@ -109,11 +122,6 @@ end;
 function GetHttpPort(Param: String): String;
 begin
   Result := IntToStr(HttpPort);
-end;
-
-function ShouldOfferTestPage: Boolean;
-begin
-  Result := ServiceHealthy;
 end;
 
 function ReadExistingInstall: Boolean;
@@ -193,7 +201,7 @@ begin
     PortValue := StrToIntDef(PortText, -1);
     if (PortValue <= 0) or (PortValue > 65535) then
     begin
-      MsgBox('Invalid /PORT value: ' + PortText, mbError, MB_OK);
+      MsgBox('无效的 /PORT 参数：' + PortText, mbError, MB_OK);
       Result := False;
       Exit;
     end;
@@ -207,13 +215,14 @@ end;
 procedure InitializeWizard;
 begin
   ServiceHealthy := False;
+  TestPageOpened := False;
   if (not HasExistingInstall) and (ExpandConstant('{param:PORT|}') = '') then
   begin
     PortPage := CreateInputQueryPage(wpSelectDir,
-      'OpenResty HTTP Port',
-      'Choose the HTTP port OpenResty listens on.',
-      'The installer writes this port into conf\nginx.conf. You can change it later in the configuration file.');
-    PortPage.Add('HTTP port (&1-65535):', False);
+      'OpenResty HTTP 端口',
+      '请选择 OpenResty 监听的 HTTP 端口。',
+      '安装程序会将该端口写入 conf\nginx.conf。之后也可以直接修改配置文件。');
+    PortPage.Add('HTTP 端口（1-65535）：', False);
     PortPage.Values[0] := IntToStr(DefaultPort);
   end;
 end;
@@ -256,13 +265,13 @@ begin
     PortValue := StrToIntDef(Trim(PortPage.Values[0]), -1);
     if (PortValue <= 0) or (PortValue > 65535) then
     begin
-      MsgBox('Please enter a port number between 1 and 65535.', mbError, MB_OK);
+      MsgBox('请输入 1 到 65535 之间的端口号。', mbError, MB_OK);
       Result := False;
       Exit;
     end;
     if IsPortInUse(PortValue) then
     begin
-      MsgBox('TCP port ' + IntToStr(PortValue) + ' is already in use. Please choose another port.',
+      MsgBox('TCP 端口 ' + IntToStr(PortValue) + ' 已被占用，请换一个端口。',
         mbError, MB_OK);
       Result := False;
       Exit;
@@ -467,10 +476,38 @@ begin
 
     PerlFound := PerlAvailable;
     if (not PerlFound) and (not WizardSilent) then
-      MsgBox('Perl was not found on this system.' + #13#10 +
-             'The OpenResty service does not need Perl, but the "resty" command-line tool does.' + #13#10 +
-             'Install Strawberry Perl from https://strawberryperl.com/ if you need resty.',
+      MsgBox('未检测到 Perl。' + #13#10 +
+             'OpenResty 服务本身不需要 Perl，但“resty”命令行工具需要。' + #13#10 +
+             '如需使用 resty，请从 https://strawberryperl.com/ 安装 Strawberry Perl。',
              mbInformation, MB_OK);
+  end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+var
+  ResultCode: Integer;
+begin
+  if CurPageID = wpFinished then
+  begin
+    if ServiceHealthy then
+      WizardForm.FinishedLabel.Caption :=
+        'OpenResty {#AppVersion} 已安装完成并正在运行。' + #13#10 +
+        '测试页：http://127.0.0.1:' + IntToStr(HttpPort) + '/'
+    else if (ExpandConstant('{param:NOSTART|0}') <> '1') and WizardIsTaskSelected('startservice') then
+      WizardForm.FinishedLabel.Caption :=
+        '安装已完成，但 OpenResty 服务未能通过健康检查。' + #13#10 +
+        '请查看日志：' + ExpandConstant('{app}\logs\error.log') + #13#10 +
+        '也可以稍后从开始菜单运行“重启 OpenResty”。'
+    else
+      WizardForm.FinishedLabel.Caption :=
+        'OpenResty {#AppVersion} 已安装完成。服务未启动，可从开始菜单运行“启动 OpenResty”。';
+
+    if ServiceHealthy and (not TestPageOpened) and (not WizardSilent) then
+    begin
+      TestPageOpened := True;
+      ShellExec('open', 'http://127.0.0.1:' + IntToStr(HttpPort) + '/', '', '',
+        SW_SHOWNORMAL, ewNoWait, ResultCode);
+    end;
   end;
 end;
 
@@ -492,8 +529,8 @@ begin
     KeepConfig := True
   else
   begin
-    Answer := MsgBox('Keep the configuration (conf), web pages (html) and logs (logs)?' + #13#10 +
-                     'Choose Yes to keep them, No to delete them.',
+    Answer := MsgBox('是否保留配置文件（conf）、网页文件（html）和日志（logs）？' + #13#10 +
+                     '选择“是”保留，选择“否”删除。',
                      mbConfirmation, MB_YESNO);
     KeepConfig := (Answer = IDYES);
   end;
