@@ -68,11 +68,7 @@ $ServiceXml = @"
   <stoparguments>-p "%BASE%" -c conf/nginx.conf -s quit</stoparguments>
   <startmode>Automatic</startmode>
   <delayedAutoStart>false</delayedAutoStart>
-  <logpath>%BASE%\logs</logpath>
-  <log mode="roll-by-size">
-    <sizeThreshold>10240</sizeThreshold>
-    <keepFiles>8</keepFiles>
-  </log>
+  <log mode="none"/>
   <onfailure action="restart" delay="10 sec"/>
   <resetfailure>1 hour</resetfailure>
 </service>

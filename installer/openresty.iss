@@ -77,13 +77,13 @@ Name: "{group}\Uninstall OpenResty"; Filename: "{uninstallexe}"
 Root: HKLM; Subkey: "Software\OpenResty"; Flags: uninsdeletekey
 
 [Run]
-Filename: "{app}\{#ServiceExeName}"; Parameters: "uninstall"; Flags: runhidden waituntilterminated; StatusMsg: "Removing previous OpenResty service registration..."
-Filename: "{app}\{#ServiceExeName}"; Parameters: "install"; Flags: runhidden waituntilterminated; StatusMsg: "Registering the OpenResty service..."
+Filename: "{app}\{#ServiceExeName}"; Parameters: "uninstall"; WorkingDir: "{tmp}"; Flags: runhidden waituntilterminated; StatusMsg: "Removing previous OpenResty service registration..."
+Filename: "{app}\{#ServiceExeName}"; Parameters: "install"; WorkingDir: "{tmp}"; Flags: runhidden waituntilterminated; StatusMsg: "Registering the OpenResty service..."
 Filename: "http://127.0.0.1:{code:GetHttpPort}/"; Description: "Open the OpenResty test page"; Flags: shellexec nowait postinstall skipifsilent; Check: ShouldOfferTestPage
 
 [UninstallRun]
-Filename: "{app}\{#ServiceExeName}"; Parameters: "stop"; RunOnceId: "StopOpenRestyService"; Flags: runhidden waituntilterminated
-Filename: "{app}\{#ServiceExeName}"; Parameters: "uninstall"; RunOnceId: "RemoveOpenRestyService"; Flags: runhidden waituntilterminated
+Filename: "{app}\{#ServiceExeName}"; Parameters: "stop"; WorkingDir: "{tmp}"; RunOnceId: "StopOpenRestyService"; Flags: runhidden waituntilterminated
+Filename: "{app}\{#ServiceExeName}"; Parameters: "uninstall"; WorkingDir: "{tmp}"; RunOnceId: "RemoveOpenRestyService"; Flags: runhidden waituntilterminated
 
 [Code]
 const
@@ -290,9 +290,9 @@ begin
   ExePath := ExpandConstant('{app}\{#ServiceExeName}');
   if FileExists(ExePath) then
   begin
-    Exec(ExePath, 'stop', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExePath, 'stop', ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Sleep(500);
-    Exec(ExePath, 'uninstall', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExePath, 'uninstall', ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 end;
 
@@ -461,7 +461,7 @@ begin
     if (NoStart <> '1') and WizardIsTaskSelected('startservice') then
     begin
       ServiceExe := ExpandConstant('{app}\{#ServiceExeName}');
-      Exec(ServiceExe, 'start', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec(ServiceExe, 'start', ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
       ServiceHealthy := WaitForHealth(60000);
     end;
 
@@ -500,6 +500,21 @@ begin
   Log('KeepConfig: ' + BoolText(KeepConfig));
 end;
 
+procedure RemoveServiceRegistration;
+var
+  ResultCode: Integer;
+  I: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'), '/c sc stop OpenResty >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1500);
+  for I := 1 to 5 do
+  begin
+    Exec(ExpandConstant('{cmd}'), '/c sc delete OpenResty >nul 2>nul', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(1000);
+  end;
+  Log('Service registration cleanup attempted.');
+end;
+
 procedure DeleteUserData;
 begin
   Log('Deleting conf: ' + BoolText(DelTree(ExpandConstant('{app}\conf'), True, True, True)));
@@ -516,11 +531,13 @@ begin
   begin
     ServiceExe := ExpandConstant('{app}\{#ServiceExeName}');
     if FileExists(ServiceExe) then
-      Exec(ServiceExe, 'stop', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec(ServiceExe, 'stop', ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
     StopNginxProcessesInAppDir;
+    RemoveServiceRegistration;
   end;
   if CurUninstallStep = usPostUninstall then
   begin
+    RemoveServiceRegistration;
     RemoveFromPath;
     Sleep(1000);
     if not KeepConfig then
@@ -533,5 +550,9 @@ begin
     RemoveDir(ExpandConstant('{app}\html'));
     RemoveDir(ExpandConstant('{app}\logs'));
     RemoveDir(ExpandConstant('{app}'));
+    if DirExists(ExpandConstant('{app}')) then
+      Exec(ExpandConstant('{cmd}'),
+        '/c ping 127.0.0.1 -n 4 >nul & rmdir /s /q "' + ExpandConstant('{app}') + '"',
+        ExpandConstant('{tmp}'), SW_HIDE, ewNoWait, ResultCode);
   end;
 end;
