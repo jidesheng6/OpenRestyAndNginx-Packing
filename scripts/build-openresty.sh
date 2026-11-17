@@ -36,7 +36,8 @@ fetch "https://openresty.org/download/openresty-$OPENRESTY_VERSION.tar.gz" \
       "$CACHE_DIR/openresty-$OPENRESTY_VERSION.tar.gz"
 fetch "https://github.com/openssl/openssl/releases/download/$OPENSSL_VER/$OPENSSL_VER.tar.gz" \
       "$CACHE_DIR/$OPENSSL_VER.tar.gz"
-fetch "https://github.com/madler/zlib/releases/download/v$ZLIB_VER/$ZLIB_VER.tar.gz" \
+ZLIB_TAG="${ZLIB_VER#zlib-}"
+fetch "https://github.com/madler/zlib/releases/download/v$ZLIB_TAG/$ZLIB_VER.tar.gz" \
       "$CACHE_DIR/$ZLIB_VER.tar.gz"
 fetch "https://github.com/PCRE2Project/pcre2/releases/download/$PCRE_VER/$PCRE_VER.tar.gz" \
       "$CACHE_DIR/$PCRE_VER.tar.gz"

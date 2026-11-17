@@ -76,6 +76,7 @@ jobs:
         with:
           msystem: MINGW64
           update: false
+          suppress-deprecation-warnings: msystem-mingw64
           install: >-
             base-devel
             mingw-w64-x86_64-toolchain
@@ -85,6 +86,14 @@ jobs:
             patch
             zip
             unzip
+
+      - name: Cache build downloads
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: openresty-deps-${{ hashFiles('scripts/build-openresty.sh') }}
+          restore-keys: |
+            openresty-deps-
 
       - name: Build OpenResty from source
         shell: msys2 {0}
