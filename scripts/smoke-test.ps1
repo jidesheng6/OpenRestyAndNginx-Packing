@@ -12,7 +12,7 @@ $Uninstaller = Join-Path $InstallDir "unins000.exe"
 $ConfPath = Join-Path $InstallDir "conf\nginx.conf"
 $StartMenuDir = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\OpenResty"
 $DesktopDir = Join-Path $env:PUBLIC "Desktop"
-$DesktopBefore = @(Get-ChildItem $DesktopDir -Filter *.lnk -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+$DesktopBefore = @(Get-ChildItem $DesktopDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.lnk', '.url') } | Select-Object -ExpandProperty FullName)
 $Marker = "# smoke-test upgrade marker 0123456789"
 
 function Wait-For([scriptblock]$Condition, [int]$TimeoutSeconds, [string]$Description) {
@@ -65,19 +65,24 @@ try {
         if (-not (Test-Path $iconPath)) { throw "Missing shortcut icon: $iconPath" }
     }
 
-    $startLinks = @(Get-ChildItem $StartMenuDir -Filter *.lnk -ErrorAction SilentlyContinue)
+    $startLinks = @(Get-ChildItem $StartMenuDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.lnk', '.url') })
     if ($startLinks.Count -lt 6) {
         throw "Expected 6 Start Menu shortcuts, found $($startLinks.Count) in $StartMenuDir"
     }
-    $desktopAfter = @(Get-ChildItem $DesktopDir -Filter *.lnk -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+    $desktopAfter = @(Get-ChildItem $DesktopDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.lnk', '.url') } | Select-Object -ExpandProperty FullName)
     $desktopNew = @($desktopAfter | Where-Object { $_ -notin $DesktopBefore })
     if ($desktopNew.Count -lt 4) {
         throw "Expected 4 new desktop shortcuts, found $($desktopNew.Count)"
     }
     $wsh = New-Object -ComObject WScript.Shell
     foreach ($link in (@($startLinks | ForEach-Object { $_.FullName }) + $desktopNew)) {
-        $shortcut = $wsh.CreateShortcut($link)
-        $iconPath = ($shortcut.IconLocation -split ',')[0].Trim('"')
+        if ($link -like '*.url') {
+            $iconLine = Get-Content $link | Where-Object { $_ -like 'IconFile=*' } | Select-Object -First 1
+            $iconPath = if ($iconLine) { $iconLine.Substring('IconFile='.Length).Trim('"') } else { '' }
+        } else {
+            $shortcut = $wsh.CreateShortcut($link)
+            $iconPath = ($shortcut.IconLocation -split ',')[0].Trim('"')
+        }
         if (-not $iconPath -or -not (Test-Path $iconPath)) {
             throw "Shortcut has no valid icon: $link -> $iconPath"
         }
@@ -130,7 +135,7 @@ try {
         throw "Desktop shortcuts were not removed: $($remainingLinks -join '; ')"
     }
     if (Test-Path $StartMenuDir) {
-        $remainingStartLinks = @(Get-ChildItem $StartMenuDir -Filter *.lnk -ErrorAction SilentlyContinue)
+        $remainingStartLinks = @(Get-ChildItem $StartMenuDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.lnk', '.url') })
         if ($remainingStartLinks.Count -gt 0) {
             throw "Start Menu shortcuts were not removed: $($remainingStartLinks.FullName -join '; ')"
         }
