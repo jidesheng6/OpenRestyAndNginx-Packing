@@ -1,0 +1,6 @@
+.cache/
+.build/
+payload/
+installer/Output/
+release-notes.md
+*.log

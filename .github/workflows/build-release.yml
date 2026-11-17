@@ -1,0 +1,166 @@
+name: Build Windows Installer
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "OpenResty version, for example 1.31.8.1. Leave empty to auto-detect the latest release."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: openresty-windows-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve OpenResty version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      build: ${{ steps.resolve.outputs.build }}
+    steps:
+      - name: Detect latest version and check existing release
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          version="$(printf '%s' "$INPUT_VERSION" | tr -d '[:space:]')"
+          if [ -z "$version" ]; then
+            html="$(curl -fsSL --retry 5 --retry-delay 2 https://openresty.org/en/download.html)"
+            version="$(printf '%s' "$html" \
+              | grep -oE 'openresty-[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
+              | head -n1 \
+              | sed -E 's/^openresty-//; s/\.tar\.gz$//')"
+          fi
+          if [ -z "$version" ]; then
+            echo "error: unable to determine the latest OpenResty version" >&2
+            exit 1
+          fi
+          code="$(curl -s -o /dev/null -w '%{http_code}' -r 0-0 "https://openresty.org/download/openresty-$version.tar.gz")"
+          if [ "$code" != "200" ] && [ "$code" != "206" ]; then
+            echo "error: openresty-$version.tar.gz is not downloadable (HTTP $code)" >&2
+            exit 1
+          fi
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release v$version already exists; nothing to build."
+            build=false
+          else
+            build=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $version (build=$build)" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build and release installer
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2 (MINGW64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            base-devel
+            mingw-w64-x86_64-toolchain
+            perl
+            make
+            wget
+            patch
+            zip
+            unzip
+
+      - name: Build OpenResty from source
+        shell: msys2 {0}
+        run: bash scripts/build-openresty.sh
+
+      - name: Stage installer payload
+        shell: pwsh
+        run: ./scripts/stage-payload.ps1 -Version $env:VERSION
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+          $installer = Join-Path $env:RUNNER_TEMP "innosetup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+          Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "ISCC.exe not found" }
+          & $iscc "/DAppVersion=$env:VERSION" "installer\openresty.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed with exit code $LASTEXITCODE" }
+
+      - name: Smoke test installer
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "installer\Output\OpenResty-Setup-*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "Setup executable not found" }
+          ./scripts/smoke-test.ps1 -InstallerPath $setup.FullName -Port 18080
+
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "installer\Output\OpenResty-Setup-*.exe" | Select-Object -First 1
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($setup.Name)" | Set-Content -Path "$($setup.FullName).sha256" -Encoding ASCII
+          Get-Content "$($setup.FullName).sha256"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenResty-Setup-${{ needs.resolve.outputs.version }}-win64
+          path: |
+            installer/Output/OpenResty-Setup-*.exe
+            installer/Output/OpenResty-Setup-*.exe.sha256
+          if-no-files-found: error
+
+      - name: Prepare release notes
+        shell: pwsh
+        run: |
+          @"
+          OpenResty $env:VERSION for Windows x64.
+
+          - Built from the official OpenResty source tarball on windows-latest with MSYS2 / MinGW64.
+          - Inno Setup installer with optional service registration managed by WinSW (service name: OpenResty).
+          - Upgrade replaces binaries but keeps conf/, html/ and logs/ untouched.
+          - The default HTTP port is 80 and can be changed during a fresh install (/PORT=<port> for silent installs).
+          - Uninstall stops and removes the service, and removes the installation directory from PATH.
+
+          Upstream changes: https://openresty.org/en/changes.html
+          License: MIT (installer), OpenResty is BSD licensed by OpenResty Inc.
+          "@ | Set-Content -Path release-notes.md -Encoding UTF8
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = Get-ChildItem "installer\Output\OpenResty-Setup-*.exe*" | ForEach-Object { $_.FullName }
+          gh release create "v$env:VERSION" $assets `
+            --repo "$env:GITHUB_REPOSITORY" `
+            --title "OpenResty $env:VERSION Windows Setup" `
+            --notes-file release-notes.md
