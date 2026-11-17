@@ -529,5 +529,9 @@ begin
   if (CurUninstallStep = usDone) and (not KeepConfig) then
   begin
     DeleteUserData;
+    RemoveDir(ExpandConstant('{app}\conf'));
+    RemoveDir(ExpandConstant('{app}\html'));
+    RemoveDir(ExpandConstant('{app}\logs'));
+    RemoveDir(ExpandConstant('{app}'));
   end;
 end;
