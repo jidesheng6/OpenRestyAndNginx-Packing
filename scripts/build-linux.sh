@@ -156,6 +156,22 @@ cd "$SRC_DIR"
 echo "==> Building OpenResty"
 make -j"$JOBS"
 
+# Nginx's link line prefers libluajit-5.1.so over the .a archive. Relink
+# against the static archive so the portable tarball does not depend on an
+# absolute /usr/local/openresty/luajit/lib rpath.
+echo "==> Relinking nginx against static LuaJIT"
+LUAJIT_BUILD_LIB="$SRC_DIR/build/luajit-root/usr/local/openresty/luajit/lib"
+if [ ! -f "$LUAJIT_BUILD_LIB/libluajit-5.1.a" ]; then
+  echo "error: LuaJIT static archive not found under $LUAJIT_BUILD_LIB" >&2
+  exit 1
+fi
+rm -f "$LUAJIT_BUILD_LIB"/libluajit-5.1.so*
+(
+  cd "$SRC_DIR/build/nginx-1.31.8"
+  rm -f objs/nginx
+  make -j"$JOBS"
+)
+
 echo "==> Installing into staging root"
 make install DESTDIR="$INSTALL_ROOT"
 
@@ -173,8 +189,12 @@ fi
 
 echo "==> Verifying static runtime dependencies"
 ldd "$OPENRESTY_INSTALL/nginx/sbin/nginx" | tee "$BUILD_ROOT/ldd.txt"
-if grep -Eq 'libssl|libcrypto|libpcre2|libz\.so' "$BUILD_ROOT/ldd.txt"; then
+if grep -Eq 'libssl|libcrypto|libpcre2|libz\.so|libluajit' "$BUILD_ROOT/ldd.txt"; then
   echo "error: nginx still links a dynamic third-party library" >&2
+  exit 1
+fi
+if grep -q 'not found' "$BUILD_ROOT/ldd.txt"; then
+  echo "error: nginx has an unresolved dynamic dependency" >&2
   exit 1
 fi
 "$OPENRESTY_INSTALL/nginx/sbin/nginx" -V > "$BUILD_ROOT/nginx-V.txt" 2>&1 || true

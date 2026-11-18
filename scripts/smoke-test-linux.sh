@@ -47,7 +47,6 @@ docker run --rm -i --platform "$PLATFORM" \
   almalinux:8 bash -s <<'EOS'
 set -euo pipefail
 dnf install -y --nogpgcheck "$RPM_FILE"
-dnf install -y curl >/dev/null
 /usr/local/openresty/bin/openresty -t
 /usr/local/openresty/bin/openresty
 sleep 1
@@ -63,7 +62,6 @@ docker run --rm -i --platform "$PLATFORM" \
   almalinux:9 bash -s <<'EOS'
 set -euo pipefail
 dnf install -y --nogpgcheck "$RPM_FILE"
-dnf install -y curl >/dev/null
 /usr/local/openresty/bin/openresty -t
 /usr/local/openresty/bin/openresty
 sleep 1
