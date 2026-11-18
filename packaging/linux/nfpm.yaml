@@ -1,0 +1,50 @@
+name: openresty
+arch: ${PKG_GOARCH}
+platform: linux
+version: ${VERSION}
+release: "1"
+section: net
+priority: optional
+maintainer: jidesheng6 <jidesheng6@users.noreply.github.com>
+description: |
+  OpenResty is a full-fledged web platform that integrates the standard
+  Nginx core, LuaJIT, many carefully written Lua libraries, lots of high
+  quality 3rd-party Nginx modules, and most of their external dependencies.
+vendor: OpenResty Packaging
+homepage: https://openresty.org/
+license: BSD-2-Clause
+
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.28)
+      - perl
+      - curl
+      - tar
+      - gzip
+  rpm:
+    depends:
+      - glibc
+      - perl-interpreter
+      - curl
+      - tar
+      - gzip
+
+contents:
+  - src: "${PKG_ROOT}/usr/"
+    dst: /usr
+    type: tree
+    expand: true
+  - src: "${PKG_ROOT}/etc/"
+    dst: /etc
+    type: tree
+    expand: true
+  - src: "${CONF_DIR}/"
+    dst: /usr/local/openresty/nginx/conf
+    type: config|noreplace|tree
+    expand: true
+
+scripts:
+  postinstall: scripts/postinstall.sh
+  preremove: scripts/preremove.sh
+  postremove: scripts/postremove.sh

@@ -1,4 +1,4 @@
-name: 构建 Windows 安装程序
+name: 构建全平台安装包
 
 on:
   schedule:
@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: openresty-windows-release
+  group: openresty-release
   cancel-in-progress: false
 
 jobs:
@@ -71,11 +71,12 @@ jobs:
           echo "build=$build" >> "$GITHUB_OUTPUT"
           echo "解析结果：版本 $version（build=$build）" >> "$GITHUB_STEP_SUMMARY"
 
-  build:
-    name: 构建并发布安装程序
+  build-windows:
+    name: 构建 Windows x64 安装程序
     needs: resolve
     if: needs.resolve.outputs.build == 'true'
     runs-on: windows-latest
+    timeout-minutes: 60
     env:
       VERSION: ${{ needs.resolve.outputs.version }}
       OPENRESTY_VERSION: ${{ needs.resolve.outputs.version }}
@@ -88,7 +89,6 @@ jobs:
         with:
           msystem: MINGW64
           update: false
-          suppress-deprecation-warnings: msystem-mingw64
           install: >-
             base-devel
             mingw-w64-x86_64-toolchain
@@ -103,7 +103,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache
-          key: openresty-deps-${{ hashFiles('scripts/build-openresty.sh') }}
+          key: openresty-deps-${{ hashFiles('scripts/build-openresty.sh', 'scripts/build-linux.sh', 'patches/*') }}
           restore-keys: |
             openresty-deps-
 
@@ -160,43 +160,145 @@ jobs:
             installer/Output/OpenResty-Setup-*.exe.sha256
           if-no-files-found: error
 
-      - name: 生成发布说明
-        shell: pwsh
-        run: |
-          @"
-          OpenResty $env:VERSION Windows x64 安装包。
+  build-linux:
+    name: 构建 Linux ${{ matrix.arch }} 安装包
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            goarch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - arch: aarch64
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      OPENRESTY_VERSION: ${{ needs.resolve.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+      PKG_GOARCH: ${{ matrix.goarch }}
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
 
+      - name: 缓存构建下载
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: openresty-linux-${{ matrix.arch }}-${{ hashFiles('scripts/build-linux.sh', 'patches/*') }}
+          restore-keys: |
+            openresty-linux-${{ matrix.arch }}-
+
+      - name: 在 AlmaLinux 8 中编译并打包
+        run: |
+          docker run --rm \
+            --platform "$PLATFORM" \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            -e OPENRESTY_VERSION \
+            -e ARCH \
+            -e PKG_GOARCH \
+            -e DIST_DIR=/work/dist \
+            almalinux:8 \
+            bash scripts/build-linux.sh
+
+      - name: 烟测 RPM、DEB 与绿色版
+        run: bash scripts/smoke-test-linux.sh
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenResty-Linux-${{ matrix.arch }}-${{ needs.resolve.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: 创建或更新 Release
+    needs:
+      - resolve
+      - build-windows
+      - build-linux
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - name: 下载全部构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 生成 SHA256 校验和
+        run: |
+          set -euo pipefail
+          cd dist
+          find . -maxdepth 1 -type f ! -name '*.sha256' ! -name 'SHA256SUMS' -printf '%f\n' \
+            | sort \
+            | while read -r file; do
+                sha256sum "$file"
+              done > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: 生成发布说明
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          OpenResty $VERSION Windows / Linux 安装包。
+
+          ## Windows x64
           - 基于 OpenResty 官方源码包，在 windows-latest 上使用 MSYS2 / MinGW64 构建。
           - 安装程序为简体中文界面，使用 Inno Setup 制作；服务由 WinSW 注册和管理，服务名为 OpenResty。
           - 升级安装会替换程序文件，但保留 conf/、html/ 和 logs/ 目录。
           - 全新安装默认使用 80 端口，可在安装向导中修改；静默安装可传 /PORT=<端口>。
           - 安装完成后会自动打开测试页；可在“附加任务”中选择创建桌面快捷方式。
-          - 卸载时会停止并删除服务，并从系统 PATH 中移除安装目录。
+
+          ## Linux
+          - 提供 RPM、DEB 和绿色版 tar.gz，支持 x86_64 与 aarch64。
+          - 在 AlmaLinux 8 容器内构建，兼容 glibc 2.28 及更高版本（el8/9/10、Debian 10+、Ubuntu 20.04+）。
+          - OpenSSL、PCRE2、zlib 已静态内置；系统包额外依赖 perl、curl、tar、gzip（resty/opm 使用）。
+          - RPM：sudo dnf install ./openresty-$VERSION-1.x86_64.rpm（arm64 为 aarch64.rpm）
+          - DEB：sudo apt install ./openresty_$VERSION-1_amd64.deb（arm64 为 arm64.deb）
+          - 绿色版：解压后执行 ./start.sh，默认监听 http://127.0.0.1:8080/
+          - 系统包安装后：sudo systemctl enable --now openresty
+          - 配置：/usr/local/openresty/nginx/conf/nginx.conf
+          - 健康检查：http://127.0.0.1/healthz
+
+          ## 校验
+          - SHA256SUMS 包含所有产物的 SHA256 校验和。
+          - Windows 安装包另有 .sha256 文件。
 
           上游更新日志：https://openresty.org/en/changes.html
-          许可证：安装程序为 MIT；OpenResty 由 OpenResty Inc. 以 BSD 许可证发布。
-          "@ | Set-Content -Path release-notes.md -Encoding UTF8
+          许可证：安装程序与打包脚本为 MIT；OpenResty 由 OpenResty Inc. 以 BSD 许可证发布。
+          EOF
 
       - name: 创建或更新 GitHub Release
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v$env:VERSION"
-          $assets = Get-ChildItem "installer\Output\OpenResty-Setup-*.exe*" | ForEach-Object { $_.FullName }
-          gh release view $tag --repo "$env:GITHUB_REPOSITORY" *> $null
-          $releaseExists = ($LASTEXITCODE -eq 0)
-          if ($releaseExists) {
-            gh release upload $tag $assets --repo "$env:GITHUB_REPOSITORY" --clobber
-            if ($LASTEXITCODE -ne 0) { throw "上传 Release 附件失败" }
-            gh release edit $tag --repo "$env:GITHUB_REPOSITORY" `
-              --title "OpenResty $env:VERSION Windows 安装包" `
+          set -euo pipefail
+          tag="v$VERSION"
+          shopt -s nullglob
+          assets=(dist/*)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "错误：没有可上传的产物" >&2
+            exit 1
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+              --title "OpenResty $VERSION Windows / Linux 安装包" \
               --notes-file release-notes.md
-            if ($LASTEXITCODE -ne 0) { throw "更新 Release 说明失败" }
-          } else {
-            gh release create $tag $assets `
-              --repo "$env:GITHUB_REPOSITORY" `
-              --title "OpenResty $env:VERSION Windows 安装包" `
+          else
+            gh release create "$tag" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "OpenResty $VERSION Windows / Linux 安装包" \
               --notes-file release-notes.md
-            if ($LASTEXITCODE -ne 0) { throw "创建 Release 失败" }
-          }
+          fi
