@@ -22,7 +22,7 @@ OpenResty @VERSION@ Linux 安装包
 依赖：
   - glibc 2.28 或更高版本
   - resty 需要 perl；opm 还需要 curl、tar、gzip
-  - OpenSSL、PCRE2、zlib 已静态内置，不需要额外安装
+  - OpenSSL、PCRE2、zlib、libxcrypt 已静态内置，不需要额外安装
 
 更多说明：
   https://github.com/jidesheng6/openresty-packaging

@@ -34,6 +34,7 @@ esac
 PCRE2_VERSION="${PCRE2_VERSION:-10.49}"
 ZLIB_VERSION="${ZLIB_VERSION:-1.3.2}"
 OPENSSL_VERSION="${OPENSSL_VERSION:-3.5.9}"
+XCRYPT_VERSION="${XCRYPT_VERSION:-4.5.2}"
 NFPM_VERSION="${NFPM_VERSION:-2.49.0}"
 JOBS="${JOBS:-$(nproc)}"
 
@@ -94,6 +95,8 @@ fetch "https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLI
       "$CACHE_DIR/zlib-$ZLIB_VERSION.tar.gz"
 fetch "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-$PCRE2_VERSION/pcre2-$PCRE2_VERSION.tar.gz" \
       "$CACHE_DIR/pcre2-$PCRE2_VERSION.tar.gz"
+fetch "https://github.com/besser82/libxcrypt/releases/download/v$XCRYPT_VERSION/libxcrypt-$XCRYPT_VERSION.tar.xz" \
+      "$CACHE_DIR/libxcrypt-$XCRYPT_VERSION.tar.xz"
 
 rm -rf "$SRC_DIR" "$INSTALL_ROOT" "$PKG_ROOT" "$CONF_DIR" "$PORTABLE_PARENT"
 mkdir -p "$SRC_DIR" "$INSTALL_ROOT" "$DEPS_DIR" "$PKG_ROOT" "$CONF_DIR" "$PORTABLE_ROOT"
@@ -102,6 +105,15 @@ tar -xzf "$CACHE_DIR/openresty-$OPENRESTY_VERSION.tar.gz" -C "$BUILD_ROOT"
 tar -xzf "$CACHE_DIR/openssl-$OPENSSL_VERSION.tar.gz" -C "$DEPS_DIR"
 tar -xzf "$CACHE_DIR/zlib-$ZLIB_VERSION.tar.gz" -C "$DEPS_DIR"
 tar -xzf "$CACHE_DIR/pcre2-$PCRE2_VERSION.tar.gz" -C "$DEPS_DIR"
+tar -xJf "$CACHE_DIR/libxcrypt-$XCRYPT_VERSION.tar.xz" -C "$DEPS_DIR"
+
+echo "==> Building static libxcrypt"
+(
+  cd "$DEPS_DIR/libxcrypt-$XCRYPT_VERSION"
+  ./configure --prefix="$DEPS_DIR/libxcrypt" --disable-shared --enable-static
+  make -j"$JOBS"
+  make install
+)
 
 OPENSSL_PATCH="$REPO_ROOT/patches/openssl-3.5.5-sess_set_get_cb_yield.patch"
 if [ -f "$OPENSSL_PATCH" ]; then
@@ -116,6 +128,7 @@ cd "$SRC_DIR"
 ./configure \
   --prefix=/usr/local/openresty \
   --with-cc=gcc \
+  --with-ld-opt="-L$DEPS_DIR/libxcrypt/lib" \
   --with-compat \
   --with-file-aio \
   --with-threads \
@@ -189,7 +202,7 @@ fi
 
 echo "==> Verifying static runtime dependencies"
 ldd "$OPENRESTY_INSTALL/nginx/sbin/nginx" | tee "$BUILD_ROOT/ldd.txt"
-if grep -Eq 'libssl|libcrypto|libpcre2|libz\.so|libluajit' "$BUILD_ROOT/ldd.txt"; then
+if grep -Eq 'libssl|libcrypto|libpcre2|libz\.so|libluajit|libcrypt' "$BUILD_ROOT/ldd.txt"; then
   echo "error: nginx still links a dynamic third-party library" >&2
   exit 1
 fi

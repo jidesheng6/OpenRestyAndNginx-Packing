@@ -7,7 +7,7 @@
 - Linux DEB：`openresty_<version>-1_<arch>.deb`
 - Linux 绿色版：`openresty-<version>-linux-<arch>.tar.gz`
 
-> 官方 Windows 二进制长期滞后，因此 Windows 版本直接编译最新源码。Linux 版本同样从源码构建，并静态内置 OpenSSL、PCRE2、zlib，避免不同发行版之间的动态库依赖问题。
+> 官方 Windows 二进制长期滞后，因此 Windows 版本直接编译最新源码。Linux 版本同样从源码构建，并静态内置 OpenSSL、PCRE2、zlib、libxcrypt，避免不同发行版之间的动态库依赖问题。
 
 ## 功能
 
@@ -25,7 +25,7 @@
 
 Linux 包采用“自包含”策略：
 
-- OpenSSL、PCRE2、zlib 静态编入 nginx，运行时不依赖 `libssl`、`libpcre2`、`libz`
+- OpenSSL、PCRE2、zlib、libxcrypt 静态编入 nginx，运行时不依赖 `libssl`、`libpcre2`、`libz`、`libcrypt`
 - 二进制在 AlmaLinux 8 容器中构建，基线为 glibc 2.28
 - 可覆盖 RHEL / AlmaLinux / Rocky 8、9、10，Debian 10+，Ubuntu 20.04+
 - RPM/DEB 只声明 `glibc` 和少量基础工具依赖；`resty` 额外需要 perl，`opm` 还需要 `curl`、`tar`、`gzip`
