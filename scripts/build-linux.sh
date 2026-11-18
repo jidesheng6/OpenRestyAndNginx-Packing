@@ -219,6 +219,21 @@ install -m 0644 "$REPO_ROOT/packaging/linux/nginx-portable.conf" \
 install -m 0755 "$REPO_ROOT/packaging/linux/portable/start.sh" "$PORTABLE_ROOT/start.sh"
 install -m 0755 "$REPO_ROOT/packaging/linux/portable/stop.sh" "$PORTABLE_ROOT/stop.sh"
 install -m 0755 "$REPO_ROOT/packaging/linux/portable/reload.sh" "$PORTABLE_ROOT/reload.sh"
+
+# Keep resty's nginx lookup relative to the real script, but add the portable
+# lualib directory to the generated nginx config's Lua search path.
+if [ -f "$PORTABLE_ROOT/bin/resty" ]; then
+  mv "$PORTABLE_ROOT/bin/resty" "$PORTABLE_ROOT/bin/resty.real"
+  cat > "$PORTABLE_ROOT/bin/resty" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec "$BASE/bin/resty.real" -I "$BASE/lualib" "$@"
+EOF
+  chmod 0755 "$PORTABLE_ROOT/bin/resty"
+fi
+
 sed -e "s/@VERSION@/$OPENRESTY_VERSION/g" -e "s/@ARCH@/$ARCH/g" \
   "$REPO_ROOT/packaging/linux/portable/README.txt" > "$PORTABLE_ROOT/README.txt"
 
