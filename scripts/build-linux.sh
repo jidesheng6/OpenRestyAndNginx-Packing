@@ -229,7 +229,7 @@ if [ -f "$PORTABLE_ROOT/bin/resty" ]; then
 set -euo pipefail
 
 BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec "$BASE/bin/resty.real" -I "$BASE/lualib" "$@"
+exec "$BASE/bin/resty.real" --nginx "$BASE/nginx/sbin/nginx" -I "$BASE/lualib" "$@"
 EOF
   chmod 0755 "$PORTABLE_ROOT/bin/resty"
 fi
