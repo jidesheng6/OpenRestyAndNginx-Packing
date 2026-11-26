@@ -180,7 +180,20 @@ if [ ! -f "$LUAJIT_BUILD_LIB/libluajit-5.1.a" ]; then
 fi
 rm -f "$LUAJIT_BUILD_LIB"/libluajit-5.1.so*
 (
-  cd "$SRC_DIR/build/nginx-1.31.8"
+  NGINX_BUILD_DIR=""
+  for candidate in "$SRC_DIR"/build/nginx-*; do
+    if [ -d "$candidate/objs" ] && [ -f "$candidate/objs/Makefile" ]; then
+      NGINX_BUILD_DIR="$candidate"
+      break
+    fi
+  done
+  if [ -z "$NGINX_BUILD_DIR" ]; then
+    echo "error: nginx build directory not found under $SRC_DIR/build" >&2
+    ls -la "$SRC_DIR/build" >&2 || true
+    exit 1
+  fi
+  echo "==> Relinking in $(basename "$NGINX_BUILD_DIR")"
+  cd "$NGINX_BUILD_DIR"
   rm -f objs/nginx
   make -j"$JOBS"
 )
