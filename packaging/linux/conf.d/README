@@ -1,0 +1,3 @@
+将你的虚拟主机配置以 *.conf 结尾放入本目录（conf/vhost/），
+主配置 nginx.conf 会通过 include vhost/*.conf; 自动加载。
+本目录在整个升级过程中会被保留，不会被新版本覆盖。

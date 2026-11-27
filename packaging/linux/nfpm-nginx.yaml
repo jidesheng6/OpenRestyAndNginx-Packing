@@ -1,0 +1,42 @@
+name: nginx
+arch: ${PKG_GOARCH}
+platform: linux
+version: ${VERSION}
+release: "1"
+section: net
+priority: optional
+maintainer: jidesheng6 <jidesheng6@users.noreply.github.com>
+description: |
+  nginx is a high-performance HTTP server, reverse proxy and mail proxy.
+  This build enables all built-in modules and statically links OpenSSL,
+  PCRE2 and zlib for broad distribution compatibility.
+vendor: nginx Packaging
+homepage: https://nginx.org/
+license: BSD-2-Clause
+
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.28)
+  rpm:
+    depends:
+      - glibc
+
+contents:
+  - src: "${PKG_ROOT}/usr/"
+    dst: /usr
+    type: tree
+    expand: true
+  - src: "${PKG_ROOT}/etc/"
+    dst: /etc
+    type: tree
+    expand: true
+  - src: "${CONF_DIR}/"
+    dst: /usr/local/nginx/conf
+    type: config|noreplace|tree
+    expand: true
+
+scripts:
+  postinstall: scripts/postinstall-nginx.sh
+  preremove: scripts/preremove-nginx.sh
+  postremove: scripts/postremove-nginx.sh

@@ -1,0 +1,401 @@
+name: 构建 OpenResty 与 nginx 全平台安装包
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "即使产物已是最新也强制重新构建并覆盖 latest Release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: packaging-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: 解析三条产品线版本
+    runs-on: ubuntu-latest
+    outputs:
+      openresty: ${{ steps.resolve.outputs.openresty }}
+      nginx_mainline: ${{ steps.resolve.outputs.nginx_mainline }}
+      nginx_stable: ${{ steps.resolve.outputs.nginx_stable }}
+      build: ${{ steps.resolve.outputs.build }}
+    steps:
+      - name: 检测版本并判断是否需要构建
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -euo pipefail
+          force="$(printf '%s' "$INPUT_FORCE" | tr '[:upper:]' '[:lower:]')"
+
+          oh_html="$(curl -fsSL --retry 5 --retry-delay 2 https://openresty.org/en/download.html)"
+          openresty="$(printf '%s' "$oh_html" \
+            | grep -oE 'openresty-[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
+            | head -n1 | sed -E 's/^openresty-//; s/\.tar\.gz$//')"
+          [ -n "$openresty" ] || { echo "错误：无法确定 OpenResty 版本" >&2; exit 1; }
+
+          ngx_html="$(curl -fsSL --retry 5 --retry-delay 2 https://nginx.org/en/download.html)"
+          extract_between() {
+            printf '%s' "$ngx_html" \
+              | sed "s/.*$1/$1/" | sed "s/$2.*/$2/" \
+              | grep -oE 'nginx-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
+              | head -n1 | sed -E 's/^nginx-//; s/\.tar\.gz$//'
+          }
+          mainline="$(extract_between 'Mainline version' 'Stable version')"
+          stable="$(extract_between 'Stable version' 'Legacy versions')"
+          [ -n "$mainline" ] && [ -n "$stable" ] || {
+            echo "错误：无法确定 nginx 版本（mainline=$mainline stable=$stable）" >&2; exit 1;
+          }
+
+          echo "检测到：OpenResty=$openresty nginx mainline=$mainline nginx stable=$stable"
+
+          build=true
+          if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "$force" = "true" ]; then
+              echo "检测到 force=true，强制重建。"
+            else
+              # 若 latest Release 已含当前三个版本的 Windows 安装包，则跳过。
+              names="$(gh release view latest --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' || true)"
+              ok=true
+              for want in "OpenResty-Setup-$openresty-win64.exe" "nginx-Setup-$mainline-win64.exe" "nginx-Setup-$stable-win64.exe"; do
+                if ! printf '%s\n' "$names" | grep -Fxq "$want"; then ok=false; fi
+              done
+              if [ "$ok" = "true" ]; then
+                echo "latest Release 已包含当前全部版本，跳过构建。"
+                build=false
+              else
+                echo "latest Release 版本已过期，需要重建。"
+              fi
+            fi
+          else
+            echo "尚无 latest Release，需要构建。"
+          fi
+
+          echo "openresty=$openresty" >> "$GITHUB_OUTPUT"
+          echo "nginx_mainline=$mainline" >> "$GITHUB_OUTPUT"
+          echo "nginx_stable=$stable" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "解析结果：OpenResty $openresty / nginx $mainline(mainline) $stable(stable)，build=$build" >> "$GITHUB_STEP_SUMMARY"
+
+  openresty-windows:
+    name: 构建 OpenResty Windows 安装程序
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.resolve.outputs.openresty }}
+      OPENRESTY_VERSION: ${{ needs.resolve.outputs.openresty }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 配置 MSYS2（MINGW64）
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            base-devel
+            mingw-w64-x86_64-toolchain
+            perl make wget patch zip unzip
+      - name: 缓存构建下载
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: openresty-deps-${{ hashFiles('scripts/build-openresty.sh', 'scripts/build-linux.sh', 'patches/*') }}
+          restore-keys: openresty-deps-
+      - name: 从源码构建 OpenResty
+        shell: msys2 {0}
+        run: bash scripts/build-openresty.sh
+      - name: 整理安装载荷
+        shell: pwsh
+        run: ./scripts/stage-payload.ps1 -Version $env:VERSION
+      - name: 安装 Inno Setup
+        shell: pwsh
+        run: |
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+          $installer = Join-Path $env:RUNNER_TEMP "innosetup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+          Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait
+      - name: 编译安装程序
+        shell: pwsh
+        run: |
+          $candidates = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "未找到 ISCC.exe" }
+          & $iscc "/DAppVersion=$env:VERSION" "installer\openresty.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译失败，退出代码 $LASTEXITCODE" }
+      - name: 烟测安装程序
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "installer\Output\OpenResty-Setup-*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "未找到安装程序" }
+          ./scripts/smoke-test.ps1 -InstallerPath $setup.FullName -Port 18080
+      - name: 生成校验和
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "installer\Output\OpenResty-Setup-*.exe" | Select-Object -First 1
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($setup.Name)" | Set-Content -Path "$($setup.FullName).sha256" -Encoding ASCII
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: openresty-win
+          path: |
+            installer/Output/OpenResty-Setup-*.exe
+            installer/Output/OpenResty-Setup-*.exe.sha256
+          if-no-files-found: error
+
+  openresty-linux:
+    name: 构建 OpenResty Linux ${{ matrix.arch }}
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            goarch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - arch: aarch64
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.resolve.outputs.openresty }}
+      OPENRESTY_VERSION: ${{ needs.resolve.outputs.openresty }}
+      ARCH: ${{ matrix.arch }}
+      PKG_GOARCH: ${{ matrix.goarch }}
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 缓存构建下载
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: openresty-linux-${{ matrix.arch }}-${{ hashFiles('scripts/build-linux.sh', 'patches/*') }}
+          restore-keys: openresty-linux-${{ matrix.arch }}-
+      - name: 在 AlmaLinux 8 中编译并打包
+        run: |
+          docker run --rm --platform "$PLATFORM" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            -e OPENRESTY_VERSION -e ARCH -e PKG_GOARCH -e DIST_DIR=/work/dist \
+            almalinux:8 bash scripts/build-linux.sh
+      - name: 烟测 RPM、DEB 与绿色版
+        run: bash scripts/smoke-test-linux.sh
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: openresty-linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  nginx-windows:
+    name: 构建 nginx Windows（${{ matrix.line }} ${{ matrix.version }}）
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - line: mainline
+            version: ${{ needs.resolve.outputs.nginx_mainline }}
+          - line: stable
+            version: ${{ needs.resolve.outputs.nginx_stable }}
+    env:
+      VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 从官方下载 nginx/Windows 并整理载荷
+        shell: pwsh
+        run: ./scripts/stage-nginx-payload.ps1 -Version $env:VERSION
+      - name: 安装 Inno Setup
+        shell: pwsh
+        run: |
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+          $installer = Join-Path $env:RUNNER_TEMP "innosetup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+          Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait
+      - name: 编译安装程序
+        shell: pwsh
+        run: |
+          $candidates = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "未找到 ISCC.exe" }
+          & $iscc "/DAppVersion=$env:VERSION" "installer\nginx.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译失败，退出代码 $LASTEXITCODE" }
+      - name: 烟测安装程序
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "installer\Output-nginx\nginx-Setup-*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "未找到安装程序" }
+          ./scripts/smoke-test-nginx.ps1 -InstallerPath $setup.FullName -Port 18081
+      - name: 生成校验和
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "installer\Output-nginx\nginx-Setup-*.exe" | Select-Object -First 1
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($setup.Name)" | Set-Content -Path "$($setup.FullName).sha256" -Encoding ASCII
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: nginx-win-${{ matrix.line }}
+          path: |
+            installer/Output-nginx/nginx-Setup-*.exe
+            installer/Output-nginx/nginx-Setup-*.exe.sha256
+          if-no-files-found: error
+
+  nginx-linux:
+    name: 构建 nginx Linux ${{ matrix.arch }}（${{ matrix.line }}）
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            goarch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            line: mainline
+            version: ${{ needs.resolve.outputs.nginx_mainline }}
+          - arch: aarch64
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            line: mainline
+            version: ${{ needs.resolve.outputs.nginx_mainline }}
+          - arch: x86_64
+            goarch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            line: stable
+            version: ${{ needs.resolve.outputs.nginx_stable }}
+          - arch: aarch64
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            line: stable
+            version: ${{ needs.resolve.outputs.nginx_stable }}
+    env:
+      VERSION: ${{ matrix.version }}
+      ARCH: ${{ matrix.arch }}
+      PKG_GOARCH: ${{ matrix.goarch }}
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 缓存构建下载
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: nginx-linux-${{ matrix.arch }}-${{ hashFiles('scripts/build-nginx.sh', 'packaging/linux/nfpm-nginx.yaml') }}
+          restore-keys: nginx-linux-${{ matrix.arch }}-
+      - name: 在 AlmaLinux 8 中编译并打包
+        run: |
+          docker run --rm --platform "$PLATFORM" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            -e NGINX_VERSION="$VERSION" -e ARCH -e PKG_GOARCH -e DIST_DIR=/work/dist \
+            almalinux:8 bash scripts/build-nginx.sh
+      - name: 烟测 RPM、DEB 与绿色版
+        run: bash scripts/smoke-test-nginx-linux.sh
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: nginx-linux-${{ matrix.line }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: 发布统一 latest Release
+    needs:
+      - resolve
+      - openresty-windows
+      - openresty-linux
+      - nginx-windows
+      - nginx-linux
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    env:
+      OPENRESTY_VERSION: ${{ needs.resolve.outputs.openresty }}
+      NGINX_MAINLINE: ${{ needs.resolve.outputs.nginx_mainline }}
+      NGINX_STABLE: ${{ needs.resolve.outputs.nginx_stable }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 下载全部产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 生成 SHA256 校验和
+        run: |
+          set -euo pipefail
+          cd dist
+          find . -maxdepth 1 -type f ! -name '*.sha256' ! -name 'SHA256SUMS' -printf '%f\n' \
+            | sort | while read -r file; do sha256sum "$file"; done > SHA256SUMS
+          cat SHA256SUMS
+          count="$(find . -maxdepth 1 -type f | wc -l)"
+          if [ "$count" -lt 20 ]; then echo "错误：产物数量异常：$count" >&2; exit 1; fi
+      - name: 生成发布说明
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          # OpenResty 与 nginx 全平台安装包（滚动最新版）
+
+          本 Release 统一发布三个产品线的全部安装包，tag 固定为 \`latest\`，每次构建覆盖更新。
+          产物文件名均自带各自版本号，可据此区分版本。
+
+          ## 版本
+          - OpenResty：$OPENRESTY_VERSION
+          - nginx mainline：$NGINX_MAINLINE
+          - nginx stable：$NGINX_STABLE
+
+          ## Windows x64（中文安装程序）
+          - OpenResty：\`OpenResty-Setup-$OPENRESTY_VERSION-win64.exe\`（源码编译）
+          - nginx mainline：\`nginx-Setup-$NGINX_MAINLINE-win64.exe\`：nginx stable：\`nginx-Setup-$NGINX_STABLE-win64.exe\`（官方二进制）
+          - 均支持服务注册（WinSW）、升级保留 conf/（含 vhost）、加入 PATH、桌面快捷方式、完成页打开测试页。
+
+          ## Linux（x86_64 / aarch64）
+          - OpenResty：RPM、DEB、绿色版 tar.gz；静态内置 OpenSSL/PCRE2/zlib。
+          - nginx：mainline 与 stable 各提供 RPM、DEB、绿色版；全部内置模块已编译。
+          - 配置目录升级保留，默认 \`include vhost/*.conf;\`。
+          - 系统包：\`sudo dnf install ./xxx.rpm\` 或 \`sudo apt install ./xxx.deb\`；绿色版解压后执行 \`./start.sh\`。
+
+          ## SW64（申威）
+          - 构建脚本已预留交叉编译入口，当前 CI 未接入 SW64 runner，暂无产物。
+
+          ## 校验
+          - \`SHA256SUMS\` 包含所有产物的 SHA256 校验和；Windows 安装包另有 \`.sha256\` 文件。
+
+          许可证：安装程序与打包脚本为 MIT；OpenResty 与 nginx 均由各自上游以 BSD 许可证发布。
+          EOF
+      - name: 更新 latest Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(dist/*)
+          if [ ${#assets[@]} -eq 0 ]; then echo "错误：没有可上传的产物" >&2; exit 1; fi
+          if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload latest "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit latest --repo "$GITHUB_REPOSITORY" \
+              --title "OpenResty 与 nginx 全平台安装包（最新）" --notes-file release-notes.md
+          else
+            gh release create latest "${assets[@]}" --repo "$GITHUB_REPOSITORY" \
+              --title "OpenResty 与 nginx 全平台安装包（最新）" --notes-file release-notes.md
+          fi
