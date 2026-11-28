@@ -1,186 +1,152 @@
-# OpenResty Packaging
+# OpenResty & nginx Packaging
 
-为 OpenResty 提供 Windows 与 Linux 的安装包构建流水线。GitHub Actions 定期检查 OpenResty 新版本，从官方源码编译，并创建或更新对应版本的 GitHub Release。
+为 **OpenResty** 和 **nginx（mainline + stable）** 三条产品线统一提供 Windows 与 Linux 安装包。GitHub Actions 每天检查各上游最新版本，任一产品线有新版本即全量构建，并把所有产物发布到同一个滚动 Release `latest`。
 
-- Windows：`OpenResty-Setup-<version>-win64.exe`
-- Linux RPM：`openresty-<version>-1.<arch>.rpm`
-- Linux DEB：`openresty_<version>-1_<arch>.deb`
-- Linux 绿色版：`openresty-<version>-linux-<arch>.tar.gz`
+仓库地址：`https://github.com/jidesheng6/OpenRestyAndNginx-Packing`
 
-> 官方 Windows 二进制长期滞后，因此 Windows 版本直接编译最新源码。Linux 版本同样从源码构建，并静态内置 OpenSSL、PCRE2、zlib、libxcrypt，避免不同发行版之间的动态库依赖问题。
+## 交付产物
 
-## 功能
+统一发布在 [`latest`](https://github.com/jidesheng6/OpenRestyAndNginx-Packing/releases/tag/latest) Release，文件名自带各自版本号：
 
-- 每日检查 `https://openresty.org/en/download.html` 的最新版本，发布新 Release
-- 支持手动指定版本重建：Actions -> 构建全平台安装包 -> Run workflow -> 填入 `1.31.8.1`
-- 同一个 `v<version>` Release 同时包含 Windows 与 Linux 产物
-- Windows 安装器为简体中文界面，使用 Inno Setup 制作；服务由 WinSW 注册和管理
-- Linux 提供 RPM、DEB 与绿色版 tar.gz，支持 `x86_64` 和 `aarch64`
-- Linux 包使用 systemd 服务 `openresty`，默认配置监听 80 端口并提供 `/healthz`
-- Linux 绿色版默认监听 8080，普通用户解压即可启动
-- 升级保留配置：RPM/DEB 的 `nginx/conf` 作为配置文件处理，Windows 升级保留 `conf/`、`html/`、`logs/`
-- 构建流程内自动执行安装、启动、健康检查和卸载烟测
+| 产品线 | Windows x64 | Linux |
+|---|---|---|
+| OpenResty | `OpenResty-Setup-<ver>-win64.exe` | `openresty-<ver>-1.<arch>.rpm` / `openresty_<ver>-1_<debarch>.deb` / `openresty-<ver>-linux-<arch>.tar.gz` |
+| nginx mainline | `nginx-Setup-<ver>-win64.exe` | `nginx-<ver>-1.<arch>.rpm` / `nginx_<ver>-1_<debarch>.deb` / `nginx-<ver>-linux-<arch>.tar.gz` |
+| nginx stable | 同上（stable 版本号） | 同上（stable 版本号） |
 
-## Linux 依赖策略
+- `<arch>` 为 `x86_64` / `aarch64`，`<debarch>` 为 `amd64` / `arm64`。
+- 每个 Windows 安装包另有 `.sha256`；整个 Release 附 `SHA256SUMS`。
+- 当前版本示例：OpenResty 1.31.9.1、nginx mainline 1.31.10、nginx stable 1.30.8。
 
-Linux 包采用“自包含”策略：
+## 核心特性
 
-- OpenSSL、PCRE2、zlib、libxcrypt 静态编入 nginx，运行时不依赖 `libssl`、`libpcre2`、`libz`、`libcrypt`
-- 二进制在 AlmaLinux 8 容器中构建，基线为 glibc 2.28
-- 可覆盖 RHEL / AlmaLinux / Rocky 8、9、10，Debian 10+，Ubuntu 20.04+
-- RPM/DEB 只声明 `glibc` 和少量基础工具依赖；`resty` 额外需要 perl，`opm` 还需要 `curl`、`tar`、`gzip`
-- 由于第三方库是静态内置的，OpenSSL 等组件发布安全更新后需要重新构建并发布新包
+- **单一工作流** `.github/workflows/build-all.yml`：解析三条线版本 → 并行构建 → 统一发布。
+- **滚动 Release**：tag 固定 `latest`，每次构建覆盖更新，产物文件名区分版本；手动可勾选 `force` 强制重建。
+- **Windows 安装器**：简体中文 Inno Setup；服务由 WinSW 注册；支持自定义端口（`/PORT=`）、加入 PATH、桌面快捷方式、完成页自动打开测试页。
+- **升级保留配置**：`conf/`（含 `conf/vhost/`）、`html/`、`logs/` 升级不覆盖；Windows 卸载时可选择保留。
+- **默认 vhost 支持**：主配置通过 `include vhost/*.conf;` 加载自定义虚拟主机。
+- **完整烟测**：构建后自动安装、启动、`/healthz` 检查、升级保留配置验证、卸载清理。
 
-这也意味着 Linux 包不是“发行版原生打包”的替代品，而是优先保证跨发行版可运行、安装简单。后续如需完全跟随发行版安全更新，可以再增加原生动态依赖的包。
+## Windows 与 Linux 构建方式差异
+
+- **OpenResty**：官方 Windows 二进制长期滞后，故 Windows 与 Linux 均从官方源码编译（MSYS2/MinGW64 + AlmaLinux 8）。Linux 静态内置 OpenSSL、PCRE2、zlib、libxcrypt。
+- **nginx**：官方 Windows zip 与源码版本同步发布，故 Windows 直接使用官方二进制打包；Linux 从源码编译，开启**全部内置模块**（HTTP/2、HTTP/3、stream、mail、ssl、realip 等），`xslt` / `image_filter` 以动态模块随包提供，OpenSSL/PCRE2/zlib 静态内置。
+
+两条 Linux 产品线的包都采用“自包含”策略：在 AlmaLinux 8 容器构建，基线 glibc 2.28，覆盖 RHEL/AlmaLinux/Rocky 8/9/10、Debian 10+、Ubuntu 20.04+。由于第三方库静态内置，OpenSSL 等发布安全更新后需重新构建发版。
 
 ## 仓库结构
 
-- `.github/workflows/build-release.yml`：版本探测、Windows/Linux 构建、烟测、统一发布
-- `scripts/build-openresty.sh`：MSYS2 下的 Windows 源码编译与运行库收集
-- `scripts/build-linux.sh`：AlmaLinux 8 下的 Linux 源码编译、安装树、RPM/DEB/绿色版生成
-- `scripts/smoke-test-linux.sh`：在 AlmaLinux 8/9 与 Debian 12 容器中验证 Linux 产物
-- `scripts/stage-payload.ps1`：Windows 安装树、WinSW 服务配置生成
-- `scripts/smoke-test.ps1`：Windows 安装/升级/卸载自动化验证
-- `scripts/generate-icons.ps1`：生成 Windows 图标资源
-- `installer/openresty.iss`：Inno Setup 脚本
-- `installer/conf/nginx.conf`：Windows 默认配置模板
-- `installer/html/index.html`：安装完成后的测试首页
-- `packaging/linux/nginx.conf`：Linux 系统包默认配置
-- `packaging/linux/nginx-portable.conf`：Linux 绿色版默认配置
-- `packaging/linux/nfpm.yaml`：RPM/DEB 打包配置
-- `packaging/linux/openresty.service`：systemd 服务
-- `packaging/linux/openresty.logrotate`：日志轮转配置
-- `packaging/linux/scripts/`：RPM/DEB 安装与卸载脚本
-- `packaging/linux/portable/`：绿色版启动、停止、重载脚本与说明
+公共工作流：
 
-## Windows 本地构建
+- `.github/workflows/build-all.yml`：三产品线版本解析、Windows/Linux 构建、烟测、统一发布到 `latest`
 
-前置条件：
+OpenResty 专用：
 
-- Windows 10 1809+ / Windows 11 x64
-- 管理员 PowerShell
-- [MSYS2](https://www.msys2.org/)（MINGW64 工具链）
-- [Inno Setup 6](https://jrsoftware.org/isinfo.php)
+- `scripts/build-openresty.sh`：MSYS2 下 Windows 源码编译
+- `scripts/build-linux.sh`：AlmaLinux 8 下 Linux 源码编译与打包
+- `scripts/smoke-test-linux.sh`：Linux 产物容器烟测
+- `scripts/stage-payload.ps1` / `scripts/smoke-test.ps1`：Windows 载荷与安装烟测
+- `installer/openresty.iss` / `installer/conf/nginx.conf` / `installer/html/index.html`：安装器与配置模板
+- `packaging/linux/`：`nfpm.yaml`、`nginx.conf`、`nginx-portable.conf`、`openresty.service`、`openresty.logrotate`、`scripts/`、`portable/`
+
+nginx 专用：
+
+- `scripts/build-nginx.sh`：AlmaLinux 8 下源码编译（全模块、静态依赖），预留 `sw64` 交叉编译入口
+- `scripts/stage-nginx-payload.ps1`：下载官方 nginx/Windows zip 并整理载荷
+- `scripts/smoke-test-nginx.ps1` / `scripts/smoke-test-nginx-linux.sh`：Windows/Linux 烟测
+- `installer/nginx.iss` / `installer/html/nginx-index.html`：nginx 安装器与测试页
+- `packaging/linux/nfpm-nginx.yaml`、`nginx-system-nginx.conf`、`nginx-portable-nginx.conf`、`nginx-service-nginx.conf`、`nginx-logrotate-nginx.conf`、`package-README-nginx.txt`、`conf.d/`、`scripts/*-nginx.sh`、`portable/*-nginx.sh`
+
+## 本地构建
+
+### OpenResty Windows（MSYS2 + Inno Setup）
 
 ```powershell
-# 在 “MSYS2 MINGW64” 终端中执行
+# MSYS2 MINGW64 终端
 pacman -S --needed base-devel mingw-w64-x86_64-toolchain perl make wget patch zip unzip
-$env:OPENRESTY_VERSION = "1.31.8.1"
+$env:OPENRESTY_VERSION = "1.31.9.1"
 bash scripts/build-openresty.sh
 
-# 回到 PowerShell
-./scripts/stage-payload.ps1 -Version 1.31.8.1
-
-# 仅在需要重新生成图标时执行
-./scripts/generate-icons.ps1
-
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=1.31.8.1" "installer\openresty.iss"
+# PowerShell
+./scripts/stage-payload.ps1 -Version 1.31.9.1
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=1.31.9.1" "installer\openresty.iss"
 ```
 
-产物位于 `installer/Output/OpenResty-Setup-<version>-win64.exe`。
+### nginx Windows（官方 zip + Inno Setup）
 
-## Linux 本地构建
-
-前置条件：Docker，能够拉取 `almalinux:8`、`almalinux:9`、`debian:12` 镜像。
-
-x86_64：
-
-```bash
-docker run --rm \
-  -v "$PWD:/work" \
-  -w /work \
-  -e OPENRESTY_VERSION=1.31.8.1 \
-  -e ARCH=x86_64 \
-  -e PKG_GOARCH=amd64 \
-  -e DIST_DIR=/work/dist \
-  almalinux:8 \
-  bash scripts/build-linux.sh
-
-ARCH=x86_64 OPENRESTY_VERSION=1.31.8.1 bash scripts/smoke-test-linux.sh
+```powershell
+$env:NGINX_VERSION = "1.31.10"   # 或 stable 版本号
+./scripts/stage-nginx-payload.ps1 -Version $env:NGINX_VERSION
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:NGINX_VERSION" "installer\nginx.iss"
 ```
 
-aarch64（在 arm64 主机上）：
+### Linux（Docker + AlmaLinux 8）
 
 ```bash
-docker run --rm \
-  -v "$PWD:/work" \
-  -w /work \
-  -e OPENRESTY_VERSION=1.31.8.1 \
-  -e ARCH=aarch64 \
-  -e PKG_GOARCH=arm64 \
-  -e DIST_DIR=/work/dist \
-  almalinux:8 \
-  bash scripts/build-linux.sh
+# OpenResty（x86_64；aarch64 改 ARCH=aarch64 PKG_GOARCH=arm64）
+docker run --rm -v "$PWD:/work" -w /work \
+  -e OPENRESTY_VERSION=1.31.9.1 -e ARCH=x86_64 -e PKG_GOARCH=amd64 -e DIST_DIR=/work/dist \
+  almalinux:8 bash scripts/build-linux.sh
+ARCH=x86_64 OPENRESTY_VERSION=1.31.9.1 bash scripts/smoke-test-linux.sh
 
-ARCH=aarch64 OPENRESTY_VERSION=1.31.8.1 bash scripts/smoke-test-linux.sh
+# nginx（x86_64；aarch64 同理）
+docker run --rm -v "$PWD:/work" -w /work \
+  -e NGINX_VERSION=1.31.10 -e ARCH=x86_64 -e PKG_GOARCH=amd64 -e DIST_DIR=/work/dist \
+  almalinux:8 bash scripts/build-nginx.sh
+ARCH=x86_64 VERSION=1.31.10 bash scripts/smoke-test-nginx-linux.sh
 ```
 
 产物位于 `dist/`。
 
-## Linux 安装
+## 安装与使用
 
 RPM：
 
 ```bash
-sudo dnf install ./openresty-1.31.8.1-1.x86_64.rpm
-sudo systemctl enable --now openresty
+sudo dnf install ./openresty-1.31.9.1-1.x86_64.rpm   # 或 nginx-1.31.10-1.x86_64.rpm
+sudo systemctl enable --now openresty                 # nginx 则为 nginx
 curl http://127.0.0.1/healthz
 ```
 
 DEB：
 
 ```bash
-sudo apt install ./openresty_1.31.8.1-1_amd64.deb
+sudo apt install ./openresty_1.31.9.1-1_amd64.deb
 sudo systemctl enable --now openresty
 curl http://127.0.0.1/healthz
 ```
 
-ARM64 请使用对应的 `aarch64.rpm` 或 `arm64.deb`。
+常用路径：
 
-常用路径与服务：
+| | OpenResty | nginx |
+|---|---|---|
+| 安装目录 | `/usr/local/openresty` | `/usr/local/nginx` |
+| 主配置 | `/usr/local/openresty/nginx/conf/nginx.conf` | `/usr/local/nginx/conf/nginx.conf` |
+| vhost 目录 | `<prefix>/nginx/conf/vhost/` | `<prefix>/conf/vhost/` |
+| systemd 服务 | `openresty.service` | `nginx.service` |
+| 健康检查 | `http://127.0.0.1/healthz` | `http://127.0.0.1/healthz` |
+| 绿色版默认端口 | 8080 | 8080 |
 
-- 安装目录：`/usr/local/openresty`
-- 配置：`/usr/local/openresty/nginx/conf/nginx.conf`
-- 日志：`/usr/local/openresty/nginx/logs/`
-- 服务：`openresty.service`
-- 健康检查：`http://127.0.0.1/healthz`
-- 命令行：`/usr/local/openresty/bin/openresty`、`resty`、`opm`
-
-> 包名为 `openresty`，安装路径与官方包一致。如果机器上已经安装官方 OpenResty，建议先卸载官方包，避免文件冲突。
-
-## Linux 绿色版
-
-```bash
-tar -xzf openresty-1.31.8.1-linux-x86_64.tar.gz
-cd openresty
-./start.sh
-curl http://127.0.0.1:8080/healthz
-./stop.sh
-```
-
-绿色版默认监听 8080，普通用户即可运行；需要 80 端口时修改 `nginx/conf/nginx.conf` 并以 root 运行。`resty`、`opm` 需要系统安装 perl。
+> 若机器已安装发行版官方同类包，建议先卸载，避免文件路径冲突。
 
 ## 版本发布流程
 
-1. 每天 02:00 UTC 自动运行，或手动触发
-2. 解析下载页最新源码版本；若 `v<version>` Release 已存在则跳过（勾选“强制重建”可覆盖已有 Release 附件）
-3. 并行构建：
-   - Windows x64：MSYS2 / MinGW64 + Inno Setup
-   - Linux x86_64：AlmaLinux 8 容器，使用原生 x86_64 runner
-   - Linux aarch64：AlmaLinux 8 容器，使用原生 arm64 runner
-4. 在容器中安装 RPM/DEB/绿色版，执行 `nginx -t`、启动、`/healthz` 检查和卸载
-5. 汇总所有产物，生成 `SHA256SUMS`
-6. 创建或更新 Release `v<version>`，标题为 `OpenResty <version> Windows / Linux 安装包`
+1. 每天 02:00 UTC 自动运行，或在 Actions 手动触发（可勾选 `force`）。
+2. 同时解析 OpenResty、nginx mainline、nginx stable 三个最新版本。
+3. 与 `latest` Release 现有产物比对；若已是最新则跳过，否则并行构建全部产品线。
+4. Windows：OpenResty 源码编译、nginx 用官方 zip；Linux：AlmaLinux 8 源码编译，x86_64/aarch64 双架构。
+5. 容器中执行安装、`nginx -t`、启动、`/healthz`、升级保留配置、卸载等烟测。
+6. 汇总全部产物到 `latest`，生成 `SHA256SUMS` 与中文发布说明（含三条线版本号）。
 
 ## 限制与说明
 
-- Windows 版 nginx 仅支持 `select` 事件模型，不适合高并发生产环境；主要用于本地开发与测试
-- Windows 安装包与 Linux 包均未做代码签名
-- Windows 的 `resty` 需要系统安装 Perl（如 [Strawberry Perl](https://strawberryperl.com/)）
-- Linux 包为自包含构建，OpenSSL 等静态库的安全更新需要重新发版
-- Linux 包不替代各发行版官方仓库中的 OpenResty；如需要严格的发行版依赖策略，应另行生成原生依赖包
-- 不支持 32 位系统
+- Windows 版 nginx 仅支持 `select`/`poll` 事件模型，官方定位为 beta，不适合高并发生产；主要用于本地开发测试。
+- Windows 安装包与 Linux 包均未做代码签名，SmartScreen 可能提示。
+- Windows 的 OpenResty `resty` 命令需要系统安装 Perl（如 Strawberry Perl）；nginx 包不需要。
+- Linux 包为自包含构建，静态库安全更新需重新发版；不替代发行版官方仓库包。
+- SW64（申威）已在 `build-nginx.sh` 预留交叉编译入口，但当前 CI 无 SW64 runner 与公开工具链，暂无产物。
+- 不支持 32 位系统。
 
 ## License
 
-本项目使用 MIT 协议。OpenResty 本身由 OpenResty Inc. 以 BSD 协议发布。
+本项目使用 MIT 协议。OpenResty 与 nginx 均由各自上游以 BSD 协议发布。
